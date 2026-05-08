@@ -1,0 +1,26 @@
+# Tickers the agent will analyze each run.
+# Keep this small — every ticker = ~1-2 LLM calls.
+tickers:
+  - symbol: AAPL
+    name: Apple Inc.
+  - symbol: MSFT
+    name: Microsoft Corp.
+  - symbol: GOOGL
+    name: Alphabet Inc. (Class A)
+  - symbol: AMZN
+    name: Amazon.com Inc.
+  - symbol: NVDA
+    name: NVIDIA Corp.
+  - symbol: META
+    name: Meta Platforms Inc.
+  - symbol: TSLA
+    name: Tesla Inc.
+
+# Indicator thresholds — tune to your strategy.
+thresholds:
+  rsi_oversold: 30
+  rsi_overbought: 70
+  bollinger_window: 20
+  bollinger_std: 2
+  sma_short: 50
+  sma_long: 200
