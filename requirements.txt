@@ -11,7 +11,7 @@ ta==0.11.0
 anthropic==0.39.0
 
 # Notifications
-twilio==9.3.7
+# (Gmail SMTP uses Python stdlib — no extra deps needed)
 
 # Config + utils
 pyyaml==6.0.2

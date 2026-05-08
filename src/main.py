@@ -23,7 +23,7 @@ from .agent import TickerAnalysis, analyze_many
 from .backtest import backtest_golden_cross, backtest_rsi_oversold
 from .data_fetcher import fetch_many
 from .indicators import compute_indicators
-from .notifier import send_whatsapp
+from .notifier import send_email
 
 
 def _setup_logging() -> None:
@@ -42,9 +42,9 @@ def load_watchlist(path: str) -> tuple[list[str], dict]:
 
 def build_digest(analyses: list[TickerAnalysis]) -> str:
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    header = f"📊 Monthly Stock Digest — {today}\n"
-    body = "\n\n— — —\n\n".join(a.to_whatsapp_chunk() for a in analyses)
-    footer = "\n\nNot investment advice. Signals only."
+    header = f"Monthly Stock Digest — {today}\n\n"
+    body = "\n\n— — —\n\n".join(a.to_text_chunk() for a in analyses)
+    footer = "\n\n--\nNot investment advice. Signals only."
     return header + body + footer
 
 
@@ -110,7 +110,8 @@ def main() -> int:
                 )
 
     console.rule("Sending digest")
-    send_whatsapp(digest, dry_run=True if args.dry else None)
+    subject = f"Monthly Stock Digest — {datetime.utcnow().strftime('%Y-%m-%d')}"
+    send_email(subject, digest, dry_run=True if args.dry else None)
     return 0
 
 

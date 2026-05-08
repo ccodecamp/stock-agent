@@ -48,16 +48,17 @@ class TickerAnalysis:
     snapshot: IndicatorSnapshot
     narrative: str
 
-    def to_whatsapp_chunk(self) -> str:
+    def to_text_chunk(self) -> str:
         s = self.snapshot
-        header = f"*{s.symbol}* — ${s.close} (as of {s.as_of})"
+        header = f"{s.symbol} — ${s.close} (as of {s.as_of})"
+        underline = "=" * len(header)
         stats = (
             f"RSI(14): {s.rsi_14} ({s.rsi_zone}) | "
             f"vs 50d: {s.pct_above_sma_50:+.1f}% | "
             f"vs 200d: {s.pct_above_sma_200:+.1f}% | "
             f"off 52w high: {s.pct_off_52w_high:+.1f}%"
         )
-        return f"{header}\n{stats}\n\n{self.narrative}"
+        return f"{header}\n{underline}\n{stats}\n\n{self.narrative}"
 
 
 def analyze_ticker(
