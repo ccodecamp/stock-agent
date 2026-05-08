@@ -10,8 +10,8 @@ from dataclasses import asdict, dataclass
 
 import pandas as pd
 from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange, BollingerBands
 from ta.trend import SMAIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
 
 
 @dataclass
