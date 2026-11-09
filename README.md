@@ -74,6 +74,23 @@ Runs 9am on the 1st of each month, but only when your machine is awake.
 For more reliable scheduling, run it as a GitHub Actions cron — ask Claude
 for the workflow file when you're ready.
 
+## Web chat (local)
+
+A conversational version: ask "How's Nvidia?" and Claude decides which tools
+to call (company lookup, price snapshot, price trend, strategy test).
+
+```bash
+# Terminal 1 — API on :8000 (needs ANTHROPIC_API_KEY in .env)
+uvicorn src.api.app:app --port 8000
+
+# Terminal 2 — static frontend on :3000
+python -m http.server 3000 -d web
+```
+
+Open http://localhost:3000. The frontend is plain HTML/JS in `web/` with no
+build step; the backend URL is set in the `api-base` meta tag in
+`web/index.html`.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md). Short version:
