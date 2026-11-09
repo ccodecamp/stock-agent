@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Backend base URL. Empty = same origin. Change when deploying. -->
+  <meta name="api-base" content="http://localhost:8000">
+  <title>Stock Guide</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <h1>Stock Guide</h1>
+        <p class="sub">Ask how any US stock is doing, in plain English.</p>
+      </div>
+      <button type="button" id="new-chat" class="ghost" hidden>New chat</button>
+    </header>
+
+    <main id="log" class="log" aria-live="polite">
+      <section id="empty" class="empty">
+        <p class="empty-title">Try asking</p>
+        <div class="suggestions">
+          <button type="button" class="chip">How's Nvidia doing?</button>
+          <button type="button" class="chip">If I'd put $100 into Apple a year ago, what would I have now?</button>
+          <button type="button" class="chip">Does buying Tesla after a big drop usually work?</button>
+          <button type="button" class="chip">How has Nike done over the last 6 months?</button>
+        </div>
+      </section>
+    </main>
+
+    <form id="composer" class="composer">
+      <label for="input" class="visually-hidden">Your question</label>
+      <textarea id="input" rows="1" maxlength="1000" placeholder="Ask about any US company…" required></textarea>
+      <button type="submit" id="send">Send</button>
+    </form>
+    <p class="disclaimer">Describes what has happened, not what will. Not investment advice.</p>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
