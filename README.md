@@ -80,16 +80,31 @@ A conversational version: ask "How's Nvidia?" and Claude decides which tools
 to call (company lookup, price snapshot, price trend, strategy test).
 
 ```bash
-# Terminal 1 — API on :8000 (needs ANTHROPIC_API_KEY in .env)
+# Needs ANTHROPIC_API_KEY in .env
 uvicorn src.api.app:app --port 8000
-
-# Terminal 2 — static frontend on :3000
-python -m http.server 3000 -d web
 ```
 
-Open http://localhost:3000. The frontend is plain HTML/JS in `web/` with no
-build step; the backend URL is set in the `api-base` meta tag in
-`web/index.html`.
+Open http://localhost:8000. The API also serves the frontend (plain HTML/JS in
+`web/`, no build step), so one process runs everything and the page calls the
+API on the same origin.
+
+## Deploy (Railway)
+
+The `Dockerfile` builds one image that serves the API and the web UI. Railway
+detects a root `Dockerfile` automatically. Nothing else is configured in code
+(Railway is retiring `railway.json`/`railway.toml`), so these settings live in
+the Railway dashboard:
+
+| Where | Setting | Value |
+|---|---|---|
+| Service → Variables | `ANTHROPIC_API_KEY` | your key (never commit it) |
+| Service → Variables | `CHAT_RATE_LIMIT` | optional, e.g. `30/minute` |
+| Service → Settings | Healthcheck path | `/api/health` |
+| Service → Settings → Networking | Public Networking | Generate Domain |
+
+Known limitation: behind Railway's proxy every request arrives from the proxy's
+address, so the per-IP rate limit is effectively one limit shared by all users.
+See the note at the top of `src/api/app.py`.
 
 ## Security
 

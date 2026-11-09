@@ -31,6 +31,43 @@ jobs:
         run: pip-audit -r requirements.txt --strict
         continue-on-error: true  # advisory; don't block builds
 
+  docker-build:
+    # Verifies the deploy image: it builds, starts with an injected $PORT,
+    # serves both the API and the web UI, and contains no .env file.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t stock-agent .
+
+      - name: Run container
+        run: docker run -d --name app -e PORT=8080 -p 8080:8080 stock-agent
+
+      - name: Smoke test
+        run: |
+          # Docker accepts connections on the published port before the app is
+          # listening, so early attempts can be reset (curl exit 56), not just
+          # refused. Wait explicitly instead of relying on curl's retry flags.
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8080/api/health; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          echo
+          test "$ready" = 1 || { echo "App did not become healthy within 60s"; exit 1; }
+          curl --fail --silent --show-error http://localhost:8080/ | grep -q "Stock Guide"
+
+      - name: Image contains no secrets
+        run: docker exec app sh -c 'test ! -e /app/.env'
+
+      - name: Container logs
+        if: always()
+        run: docker logs app
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

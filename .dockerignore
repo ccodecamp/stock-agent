@@ -1,0 +1,17 @@
+# Secrets must never be baked into an image layer.
+.env
+.env.*
+!.env.example
+
+.git
+.github
+.venv
+.claude
+.pytest_cache
+.ruff_cache
+.coverage
+__pycache__
+*.pyc
+reports
+tests
+CLAUDE.md
