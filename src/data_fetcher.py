@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import yfinance as yf
@@ -39,7 +39,7 @@ def fetch_history(symbol: str, lookback_years: int = 2) -> PriceHistory:
     Raises:
         ValueError: if the response is empty (bad ticker, network issue).
     """
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(days=int(lookback_years * 365.25))
 
     logger.info("Fetching %s from %s to %s", symbol, start.date(), end.date())
@@ -58,7 +58,7 @@ def fetch_history(symbol: str, lookback_years: int = 2) -> PriceHistory:
     if df.empty:
         raise ValueError(f"No price data returned for {symbol}")
 
-    return PriceHistory(symbol=symbol, df=df, fetched_at=datetime.utcnow())
+    return PriceHistory(symbol=symbol, df=df, fetched_at=datetime.now(timezone.utc))
 
 
 def fetch_many(symbols: list[str], lookback_years: int = 2) -> dict[str, PriceHistory]:

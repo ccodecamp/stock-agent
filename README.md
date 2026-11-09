@@ -98,6 +98,10 @@ Finance/ML libraries (`yfinance`, `pandas`, `ta`, `numpy`) and the Anthropic
 SDK are far more mature in Python. For a monthly batch job, JVM performance
 buys you nothing and Python ships in roughly a third the lines of code.
 
+## License
+
+MIT — see [LICENSE](LICENSE). In short: do whatever you want with it, but no warranty, and don't blame me if your trades go sideways.
+
 ## Disclaimers
 
 - Past indicator behavior does not predict future returns.

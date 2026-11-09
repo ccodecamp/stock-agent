@@ -19,26 +19,46 @@ from .indicators import IndicatorSnapshot
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """You are a disciplined market-analysis assistant.
+SYSTEM_PROMPT = """You are writing a friendly, plain-English stock check-in
+for someone who is NOT a finance professional. They have heard of stocks
+but they don't know what RSI, Bollinger Bands, or moving averages are.
 
 You are NOT a financial advisor. You do not predict prices. You describe
-where a stock sits relative to its own history using technical indicators,
-and you flag scenarios that have historically been associated with mean
-reversion, breakouts, or trend continuation. You never tell the user to buy
-or sell.
+what is happening with a stock in everyday language.
 
-For each ticker you receive:
-1. Summarize current valuation context vs. its own history (1-2 sentences).
-2. Flag notable signals (RSI extremes, distance from moving averages,
-   position within Bollinger bands, distance from 52-week high/low).
-3. Give a "watch zone" — a price range where, IF the user is already
-   considering accumulating this name, they may want to pay closer attention.
-4. State explicitly what would change your read (the disconfirming evidence).
-5. Output a single confidence label: "low", "medium", or "high" — about how
-   well-defined the signals are, NOT about price direction.
-
-Be concise. No bullet lists longer than 4 items. Plain prose preferred.
-Always end with the disclaimer: "Not investment advice. Signals only."
+WRITING RULES (strict):
+- Write like you are explaining to a curious friend who has never invested.
+- NEVER use jargon. Banned words: RSI, Bollinger, SMA, moving average,
+  golden cross, %B, momentum oscillator, mean reversion, oversold,
+  overbought, support, resistance.
+- Translate indicators into plain English:
+  * High RSI = "the stock has been bought heavily lately, like a runner
+    who has been sprinting — they may need to slow down soon."
+  * Low RSI = "the stock has been beaten down recently, possibly more
+    than the news justifies."
+  * Above the 200-day average = "trading higher than its typical price
+    over the last year."
+  * Below the 200-day average = "trading lower than its typical price
+    over the last year."
+  * Near 52-week high = "close to the highest price it has reached in
+    the past year."
+  * Near 52-week low = "close to the lowest price it has reached in the
+    past year."
+- Use simple analogies a non-investor would get.
+- NO markdown. NO asterisks for bold. NO headers like ## or **. Just plain
+  flowing paragraphs separated by blank lines. Email will render literally.
+- Keep it to roughly 4 short paragraphs:
+  Paragraph 1: What is happening right now — current price and how it
+    compares to recent months in plain words.
+  Paragraph 2: What the patterns suggest, in everyday terms.
+  Paragraph 3: A "watch zone" — a price range that might be more
+    interesting if they were thinking of buying. Phrase as a possibility,
+    not a recommendation.
+  Paragraph 4: What would change the picture — what to watch for that
+    would flip the read.
+- End with one short line: "Confidence: low / medium / high — <brief why>."
+- Then on the very last line: "Not investment advice — just observations."
+- 150 words max for the whole thing. Warm, clear, conversational.
 """
 
 
@@ -52,13 +72,32 @@ class TickerAnalysis:
         s = self.snapshot
         header = f"{s.symbol} — ${s.close} (as of {s.as_of})"
         underline = "=" * len(header)
-        stats = (
-            f"RSI(14): {s.rsi_14} ({s.rsi_zone}) | "
-            f"vs 50d: {s.pct_above_sma_50:+.1f}% | "
-            f"vs 200d: {s.pct_above_sma_200:+.1f}% | "
-            f"off 52w high: {s.pct_off_52w_high:+.1f}%"
-        )
-        return f"{header}\n{underline}\n{stats}\n\n{self.narrative}"
+
+        # Plain-English at-a-glance summary — no jargon.
+        if s.pct_above_sma_200 > 5:
+            trend = f"trading about {s.pct_above_sma_200:.0f}% higher than its typical price over the past year"
+        elif s.pct_above_sma_200 < -5:
+            trend = f"trading about {abs(s.pct_above_sma_200):.0f}% lower than its typical price over the past year"
+        else:
+            trend = "near its typical price over the past year"
+
+        if s.rsi_zone == "overbought":
+            momentum = "lots of buying recently — looking a bit hot"
+        elif s.rsi_zone == "oversold":
+            momentum = "lots of selling recently — looking beaten down"
+        else:
+            momentum = "calm trading, no extreme buying or selling"
+
+        if s.pct_off_52w_high > -3:
+            position = "near its highest price of the past year"
+        elif s.pct_above_52w_low < 5:
+            position = "near its lowest price of the past year"
+        else:
+            position = "somewhere in the middle of its yearly range"
+
+        quick = f"At a glance: {trend}; {momentum}; {position}."
+
+        return f"{header}\n{underline}\n{quick}\n\n{self.narrative}"
 
 
 def analyze_ticker(
