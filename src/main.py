@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -41,7 +41,7 @@ def load_watchlist(path: str) -> tuple[list[str], dict]:
 
 
 def build_digest(analyses: list[TickerAnalysis]) -> str:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     header = f"Monthly Stock Digest — {today}\n\n"
     body = "\n\n— — —\n\n".join(a.to_text_chunk() for a in analyses)
     footer = "\n\n--\nNot investment advice. Signals only."
@@ -50,7 +50,7 @@ def build_digest(analyses: list[TickerAnalysis]) -> str:
 
 def write_report(content: str, reports_dir: str) -> Path:
     Path(reports_dir).mkdir(parents=True, exist_ok=True)
-    fname = f"digest-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.md"
+    fname = f"digest-{datetime.now(UTC).strftime('%Y-%m-%d')}.md"
     path = Path(reports_dir) / fname
     path.write_text(content)
     return path
@@ -110,7 +110,7 @@ def main() -> int:
                 )
 
     console.rule("Sending digest")
-    subject = f"Monthly Stock Digest — {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+    subject = f"Monthly Stock Digest — {datetime.now(UTC).strftime('%Y-%m-%d')}"
     send_email(subject, digest, dry_run=True if args.dry else None)
     return 0
 
