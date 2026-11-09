@@ -31,6 +31,33 @@ jobs:
         run: pip-audit -r requirements.txt --strict
         continue-on-error: true  # advisory; don't block builds
 
+  docker-build:
+    # Verifies the deploy image: it builds, starts with an injected $PORT,
+    # serves both the API and the web UI, and contains no .env file.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t stock-agent .
+
+      - name: Run container
+        run: docker run -d --name app -e PORT=8080 -p 8080:8080 stock-agent
+
+      - name: Smoke test
+        run: |
+          curl --fail --silent --show-error --retry 20 --retry-delay 2 --retry-connrefused \
+            http://localhost:8080/api/health
+          echo
+          curl --fail --silent --show-error http://localhost:8080/ | grep -q "Stock Guide"
+
+      - name: Image contains no secrets
+        run: docker exec app sh -c 'test ! -e /app/.env'
+
+      - name: Container logs
+        if: always()
+        run: docker logs app
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

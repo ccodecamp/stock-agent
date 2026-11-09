@@ -1,10 +1,16 @@
 """FastAPI app for the conversational stock guide.
 
-Run locally:
+Run locally (API and web UI together on http://localhost:8000):
     uvicorn src.api.app:app --reload
 
-Behind a proxy (Fly.io, Railway) start uvicorn with --proxy-headers so rate
-limiting sees the real client IP instead of the proxy's.
+The web UI in web/ is served by this app at "/", so a deploy is one service
+and the page calls the API on the same origin (no CORS needed).
+
+Rate limiting: behind a reverse proxy every request arrives from the proxy's
+address, so the per-IP limit acts as one shared limit for all users. Do not
+turn on uvicorn's --forwarded-allow-ips="*" to fix that: it trusts the
+client-supplied X-Forwarded-For and lets anyone dodge the limit. Trust the
+specific proxy once its header behaviour is verified.
 
 Environment:
     ANTHROPIC_API_KEY   required
@@ -19,12 +25,14 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -100,3 +108,10 @@ def chat(request: Request, body: ChatRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# Mounted last so every /api route above wins; anything else is a static file,
+# with index.html served at "/".
+WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+if WEB_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
