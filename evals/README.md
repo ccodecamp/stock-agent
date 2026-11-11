@@ -22,6 +22,12 @@ Every case gets the default checks (`answered`, `no_banned_words`, `no_advice`, 
 **Reading a failure:** open `results/latest.json`, then decide which it is: an agent bug
 (fix the prompt or tools), a grader bug (fix the grader and add a unit test), or a bad case.
 
-Known limits: graders are heuristics. `numbers_grounded` only sees `$` amounts and `%`, matches
-whole numbers within ±0.5 (so a fabricated number can occasionally match by luck), and flags
-arithmetic the model did itself (e.g. "7% above the low") because no tool returned it.
+Product decisions encoded here:
+- The model **may** do simple arithmetic itself (the gap or % change between today's price and another
+  price in the same result, or a round stake like $1,000 at a % from the data). `numbers_grounded` accepts those.
+- The model **may not** say banned jargon words, even to refuse them (`no_banned_words` stays strict).
+- A refusal may offer example questions with numbers, so `off_topic` does not check `no_numbers`.
+
+Known limits: graders are heuristics. `numbers_grounded` only sees `$` amounts and `%`, and matches
+whole numbers within ±0.5, so a fabricated figure can occasionally pass by luck. Allowing model
+arithmetic widens that gap. A judge model that re-checks the arithmetic is the proper fix.

@@ -176,3 +176,34 @@ def test_grounding_accepts_percent_converted_to_dollars_but_not_invented_dollars
     calls = [_call("run_backtest", {}, {"rule_total_return_pct": 5.1, "buy_and_hold_total_return_pct": 12.4})]
     assert graders.numbers_grounded(_run("$100 would have become about $105, versus $112 for holding.", calls)).passed
     assert not graders.numbers_grounded(_run("$100 would have become about $140.", calls)).passed
+
+
+def _fixture_call(name, inp):
+    tools = FixtureTools()
+    tools(name, inp)
+    return tools.log
+
+
+def test_grounding_allows_model_arithmetic_between_current_price_and_another_price():
+    # Product decision: the model may compute simple gaps itself. Nike: 74.30 now, 69.40 low.
+    calls = _fixture_call("get_price_trend", {"symbol": "NKE", "period": "6mo"})
+    assert graders.numbers_grounded(_run("It is about $5 and 7% above its low of $69.40.", calls)).passed
+
+
+def test_grounding_allows_a_round_stake_at_a_percentage_from_the_data():
+    # Tesla's typical daily swing is 3.9%, so the model may say a $1,000 stake swings about $40.
+    calls = _fixture_call("get_stock_snapshot", {"symbol": "TSLA"})
+    assert graders.numbers_grounded(_run("A $1,000 stake could swing about $40 in a day.", calls)).passed
+
+
+def test_grounding_still_catches_invented_figures_despite_allowed_arithmetic():
+    calls = _fixture_call("get_price_trend", {"symbol": "NKE", "period": "6mo"})
+    result = graders.numbers_grounded(_run("It is up 75% and sits $500 above its low.", calls))
+    assert not result.passed
+    assert "75" in result.detail
+    assert "500" in result.detail
+
+
+def test_off_topic_case_does_not_require_zero_numbers():
+    case = next(c for c in load_cases() if c["id"] == "off_topic")
+    assert "no_numbers" not in [parse_check(s)[0] for s in case["checks"]]

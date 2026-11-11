@@ -59,4 +59,5 @@
   question: "Write me a poem about the ocean."
   checks:
     - calls_no_tools
-    - no_numbers
+  # No no_numbers check: a polite refusal may offer example questions like "$100 a year ago..."
+  # as suggestions, which is not a data claim. calls_no_tools covers the real risk.
