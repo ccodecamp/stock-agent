@@ -116,6 +116,45 @@ def _numbers_in(value, key: str = "") -> list[float]:
     return []
 
 
+_PRICE_KEYS = {"close", "start_price", "end_price", "sma_50", "sma_200", "high_52w", "low_52w"}
+_STAKES = (10, 100, 1000, 10_000)
+
+
+def _collect(value, keys: set[str], pred, out: list[float], key: str = "") -> None:
+    if isinstance(value, bool):
+        return
+    if isinstance(value, (int, float)):
+        if key in keys or pred(key):
+            out.append(abs(float(value)))
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _collect(v, keys, pred, out, k)
+    elif isinstance(value, list):
+        for v in value:
+            _collect(v, keys, pred, out, key)
+
+
+def _derived_numbers(output: dict) -> list[float]:
+    """Arithmetic the model may do itself (allowed by product decision, see evals/README.md):
+    the gap and the % change between the current price and another price in the same result,
+    and what a round stake ($10 to $10,000) gains or loses at a percentage in the result.
+    Deliberately narrow: derivations between any two numbers would let almost any figure pass."""
+    prices: list[float] = []
+    _collect(output, _PRICE_KEYS, lambda k: False, prices)
+    now = output.get("close") or output.get("end_price")
+    derived: list[float] = []
+    if now:
+        for p in prices:
+            if p:
+                derived += [abs(now - p), abs((now / p - 1) * 100)]
+    pcts: list[float] = []
+    _collect(output, set(), lambda k: "pct" in k, pcts)
+    for pct in pcts:
+        for stake in _STAKES:
+            derived += [stake * pct / 100, stake * round(pct) / 100]
+    return derived
+
+
 def _matches(quoted: float, source: float) -> bool:
     # A whole number may be a rounded value ("about 5%" for 4.7); a decimal must match closely.
     tolerance = 0.5 if quoted == int(quoted) else 0.05
@@ -124,11 +163,12 @@ def _matches(quoted: float, source: float) -> bool:
 
 def numbers_grounded(run: Run, arg=None) -> Result:
     """Every $ amount and % in the answer must come from a tool result (or the user's question)."""
-    # 100 is the baseline of the tools' "value of $100" field, so answers may restate it.
-    allowed = [100.0, *_quoted_numbers(run.question)]
+    # Round stakes ($100 is the tools' own baseline) are illustrations, not data claims.
+    allowed = [*map(float, _STAKES), *_quoted_numbers(run.question)]
     for call in run.tool_calls:
         if not call.is_error:
-            allowed += _numbers_in(json.loads(call.output))
+            data = json.loads(call.output)
+            allowed += _numbers_in(data) + _derived_numbers(data)
     ungrounded = [q for q in _quoted_numbers(run.text) if not any(_matches(q, s) for s in allowed)]
     return _fail(f"not found in tool data: {ungrounded}") if ungrounded else _ok()
 
