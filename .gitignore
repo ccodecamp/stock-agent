@@ -64,3 +64,6 @@ data/cache/
 # --- Logs ---
 *.log
 logs/
+
+# --- Eval run output ---
+evals/results/

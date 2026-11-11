@@ -127,3 +127,16 @@ def test_chat_is_rate_limited(api, monkeypatch):
     body = {"messages": [{"role": "user", "content": "hi"}]}
     codes = [api.post("/api/chat", json=body).status_code for _ in range(3)]
     assert codes == [200, 200, 429]
+
+
+def test_custom_tool_runner_is_used_instead_of_real_tools():
+    seen = []
+
+    def runner(name, inp):
+        seen.append((name, inp))
+        return json.dumps({"close": 2}), False
+
+    client = FakeClient([_tool_turn(), _text_turn()])
+    events = list(chat.stream_chat([{"role": "user", "content": "hi"}], client=client, model="m", tool_runner=runner))
+    assert seen == [("get_stock_snapshot", {"symbol": "NVDA"})]
+    assert events[-1]["messages"][1]["content"][0]["content"] == '{"close": 2}'

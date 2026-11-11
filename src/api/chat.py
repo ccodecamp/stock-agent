@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import anthropic
@@ -25,6 +25,9 @@ import anthropic
 from .tools import TOOLS, execute_tool
 
 logger = logging.getLogger(__name__)
+
+# (tool name, raw input) -> (JSON string, is_error). Swappable so evals can feed frozen data.
+ToolRunner = Callable[[str, object], tuple[str, bool]]
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 MAX_TOOL_ROUNDS = 6
@@ -71,6 +74,7 @@ def stream_chat(
     *,
     client: anthropic.Anthropic | None = None,
     model: str | None = None,
+    tool_runner: ToolRunner | None = None,
 ) -> Iterator[dict]:
     """Run one user turn. Yields UI events as dicts with a "type" key:
 
@@ -81,6 +85,7 @@ def stream_chat(
     error      {"message"}              something went wrong; turn is over
     """
     client = client or anthropic.Anthropic()
+    tool_runner = tool_runner or execute_tool  # looked up at call time so tests can patch it
     model = model or os.environ.get("CHAT_MODEL", DEFAULT_MODEL)
     effort = os.environ.get("CHAT_EFFORT", "medium")
 
@@ -157,7 +162,7 @@ def stream_chat(
         results = []
         for block in tool_uses:
             yield {"type": "tool_call", "name": block.name, "input": block.input}
-            content, is_error = execute_tool(block.name, block.input)
+            content, is_error = tool_runner(block.name, block.input)
             yield {"type": "tool_result", "name": block.name, "ok": not is_error}
             result = {"type": "tool_result", "tool_use_id": block.id, "content": content}
             if is_error:
