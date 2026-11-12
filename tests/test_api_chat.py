@@ -71,6 +71,32 @@ def test_loop_runs_tool_then_answers(fake_tool):
     assert all(t["eager_input_streaming"] for t in client.calls[0]["tools"])
 
 
+def test_chart_data_goes_to_the_page_not_to_the_model(monkeypatch):
+    result = {
+        "stocks": [{"symbol": "NVDA", "pct_change": 5.0}],
+        "chart": {"period": "6mo", "series": [{"symbol": "NVDA", "dates": ["2026-11-10"], "closes": [1.0]}]},
+    }
+    monkeypatch.setattr(chat, "execute_tool", lambda name, inp: (json.dumps(result), False))
+    client = FakeClient([_tool_turn(name="get_price_chart", inp={"symbols": ["NVDA"]}), _text_turn()])
+    events = list(chat.stream_chat([{"role": "user", "content": "Graph NVDA"}], client=client, model="m"))
+
+    assert [e["type"] for e in events] == ["tool_call", "tool_result", "chart", "text", "done"]
+    assert events[2]["series"][0]["symbol"] == "NVDA"
+    # Neither the next API call nor the stored history carries the raw series.
+    to_model = client.calls[1]["messages"][-1]["content"][0]["content"]
+    stored = events[-1]["messages"][1]["content"][0]["content"]
+    for content in (to_model, stored):
+        assert "chart" not in json.loads(content)
+        assert json.loads(content)["stocks"][0]["symbol"] == "NVDA"
+
+
+def test_failed_tool_never_emits_a_chart(monkeypatch):
+    monkeypatch.setattr(chat, "execute_tool", lambda name, inp: (json.dumps({"error": "x", "chart": {}}), True))
+    client = FakeClient([_tool_turn(name="get_price_chart", inp={"symbols": ["NVDA"]}), _text_turn()])
+    events = list(chat.stream_chat([{"role": "user", "content": "Graph NVDA"}], client=client, model="m"))
+    assert "chart" not in [e["type"] for e in events]
+
+
 def test_loop_stops_after_max_rounds(fake_tool):
     client = FakeClient([_tool_turn(f"t{i}") for i in range(chat.MAX_TOOL_ROUNDS + 1)])
     events = list(chat.stream_chat([{"role": "user", "content": "hi"}], client=client, model="m"))

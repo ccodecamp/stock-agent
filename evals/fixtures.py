@@ -135,6 +135,36 @@ def _trend(symbol: str, period: str) -> dict:
     }
 
 
+def _chart(symbols: object, period: str) -> tuple[dict, bool]:
+    """What Claude gets back from get_price_chart: summaries only. The real tool also sends the page a
+    `chart` series, which chat.py strips before the model sees it, so it is not part of the fixture."""
+    if not isinstance(symbols, list) or not 1 <= len(symbols) <= 5 or period not in {"3mo", "6mo", "1y"}:
+        return {"error": "Invalid input"}, True
+    unknown = [s for s in symbols if s not in _STOCKS]
+    if unknown:
+        return {"error": f"No price data returned for {unknown[0]}"}, True
+    months = {"3mo": 3, "6mo": 6, "1y": 12}[period]
+    stocks = []
+    for symbol in dict.fromkeys(symbols):
+        closes, labels = _STOCKS[symbol][1][-months:], _MONTHS[-months:]
+        hi, lo = max(range(months), key=closes.__getitem__), min(range(months), key=closes.__getitem__)
+        stocks.append(
+            {
+                "symbol": symbol,
+                "start_date": f"{labels[0]}-01",
+                "end_date": "2026-11-10",
+                "start_price": closes[0],
+                "end_price": closes[-1],
+                "pct_change": _pct(closes[-1], closes[0]),
+                "high_price": closes[hi],
+                "high_date": f"{labels[hi]}-15",
+                "low_price": closes[lo],
+                "low_date": f"{labels[lo]}-15",
+            }
+        )
+    return {"period": period, "chart_shown_to_user": True, "stocks": stocks}, False
+
+
 def _backtest(symbol: str, strategy: str) -> dict:
     n, avg, win, hold, rule = _BACKTESTS[symbol]
     return {
@@ -178,6 +208,9 @@ class FixtureTools:
             if symbol:
                 matches = [{"symbol": symbol, "name": _STOCKS[symbol][0], "exchange": "NASDAQ", "type": "EQUITY"}]
             return json.dumps({"query": args.get("query"), "matches": matches}), False
+        if name == "get_price_chart":
+            result, is_error = _chart(args.get("symbols"), args.get("period", "6mo"))
+            return json.dumps(result), is_error
         symbol = str(args.get("symbol", ""))
         if name in {"get_stock_snapshot", "get_price_trend", "run_backtest"}:
             if symbol not in _STOCKS:

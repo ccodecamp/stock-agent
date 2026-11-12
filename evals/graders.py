@@ -213,7 +213,12 @@ def tool_input(run: Run, arg) -> Result:
 
 
 def covers_symbols(run: Run, arg) -> Result:
-    symbols = {c.input.get("symbol") for c in run.tool_calls if isinstance(c.input, dict)}
+    symbols: set = set()
+    for c in run.tool_calls:
+        if isinstance(c.input, dict):
+            symbols.add(c.input.get("symbol"))
+            if isinstance(c.input.get("symbols"), list):  # get_price_chart takes several at once
+                symbols.update(c.input["symbols"])
     missing = [s for s in _as_list(arg) if s not in symbols]
     return _fail(f"no data fetched for {missing}") if missing else _ok()
 
