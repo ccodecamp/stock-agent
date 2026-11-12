@@ -77,3 +77,23 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  e2e:
+    # Browser tests of the chat page against a stubbed /api/chat: no Anthropic key, no cost.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt -r requirements-e2e.txt
+
+      - name: Install Chromium
+        run: playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: pytest tests_e2e -o addopts=""
