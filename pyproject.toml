@@ -16,6 +16,7 @@ ignore = ["S101"]  # allow asserts in tests
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S"]
+"tests_e2e/*" = ["S"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
