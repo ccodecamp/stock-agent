@@ -187,6 +187,24 @@ def test_fixture_trend_math_is_self_consistent():
     assert len(data["monthly_closes"]) == 6
 
 
+def test_chart_fixture_serves_summaries_only_and_rejects_bad_input():
+    tools = FixtureTools()
+    out, err = tools("get_price_chart", {"symbols": ["AAPL", "MSFT"], "period": "1y"})
+    data = json.loads(out)
+    assert not err
+    assert "chart" not in data  # the model never sees the series
+    assert [s["symbol"] for s in data["stocks"]] == ["AAPL", "MSFT"]
+    assert data["stocks"][0]["pct_change"] == round((251.4 / 212.0 - 1) * 100, 2)
+    assert tools("get_price_chart", {"symbols": ["ZZZZ"]})[1] is True
+    assert tools("get_price_chart", {"symbols": []})[1] is True
+
+
+def test_covers_symbols_understands_a_chart_call_with_several_symbols():
+    run = _run("x", [_call("get_price_chart", {"symbols": ["AAPL", "MSFT"], "period": "1y"})])
+    assert graders.covers_symbols(run, ["AAPL", "MSFT"]).passed
+    assert not graders.covers_symbols(run, ["AAPL", "TSLA"]).passed
+
+
 # ---- the case file ----
 
 

@@ -62,3 +62,20 @@
     - calls_no_tools
   # No no_numbers check: a polite refusal may offer example questions like "$100 a year ago..."
   # as suggestions, which is not a data claim. calls_no_tools covers the real risk.
+
+- id: chart_six_months
+  category: normal
+  question: "Show me a graph of Nvidia over the last 6 months"
+  checks:
+    - calls_tool: get_price_chart
+    - tool_input: {tool: get_price_chart, field: period, value: 6mo}
+    - covers_symbols: [NVDA]
+    - names_date
+
+- id: compare_chart
+  category: normal
+  question: "Compare Apple and Microsoft over the last year with a chart"
+  checks:
+    - calls_tool: get_price_chart
+    - tool_input: {tool: get_price_chart, field: period, value: 1y}
+    - covers_symbols: [AAPL, MSFT]

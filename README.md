@@ -1,7 +1,7 @@
 # Stock Guide
 
 A plain-English chat agent for US stocks. Ask "How's Nvidia doing?" and Claude decides which
-tools to call (company lookup, price snapshot, price trend, strategy test), then explains the
+tools to call (company lookup, price snapshot, price trend, charts, strategy test), then explains the
 numbers the way you would to a friend who has never invested. No jargon, no predictions, no advice.
 
 **Try it:** https://stock-agent-production-4e16.up.railway.app/ (a small demo that may be busy.

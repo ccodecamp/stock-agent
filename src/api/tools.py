@@ -14,10 +14,10 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import Literal
+from typing import Annotated, Literal
 
 import yfinance as yf
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from ..backtest import backtest_golden_cross, backtest_rsi_oversold
 from ..data_fetcher import PriceHistory, fetch_history
@@ -83,6 +83,21 @@ class BacktestInput(SymbolInput):
     strategy: Literal["dip_buying", "trend_following"]
 
 
+MAX_CHART_SYMBOLS = 5
+
+
+class ChartInput(_Strict):
+    symbols: list[Annotated[str, StringConstraints(pattern=SYMBOL_PATTERN)]] = Field(
+        min_length=1, max_length=MAX_CHART_SYMBOLS
+    )
+    period: Literal["3mo", "6mo", "1y"] = "6mo"
+
+    @field_validator("symbols")
+    @classmethod
+    def _dedupe(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(v))  # keep order, drop repeats
+
+
 # --------------------------------------------------------------------------
 # Handlers
 # --------------------------------------------------------------------------
@@ -126,6 +141,48 @@ def get_price_trend(inp: PriceTrendInput) -> dict:
         "pct_change": round((end / start - 1) * 100, 2),
         "value_of_100_dollars": round(100 * end / start, 2),
         "monthly_closes": [{"month": d.strftime("%Y-%m"), "close": round(float(v), 2)} for d, v in monthly.items()],
+    }
+
+
+_CHART_DAYS = {"3mo": 63, "6mo": 126, "1y": 252}
+
+
+def get_price_chart(inp: ChartInput) -> dict:
+    """Daily closes for the page to draw, plus a short summary for Claude.
+
+    The `chart` key is for the page only: chat.py strips it before Claude sees the result,
+    so the model never has to read (or pay for) hundreds of raw prices.
+    """
+    stocks, series = [], []
+    for symbol in inp.symbols:
+        close = _get_history(symbol).df["Close"].tail(_CHART_DAYS[inp.period])
+        start, end = float(close.iloc[0]), float(close.iloc[-1])
+        stocks.append(
+            {
+                "symbol": symbol,
+                "start_date": close.index[0].strftime("%Y-%m-%d"),
+                "end_date": close.index[-1].strftime("%Y-%m-%d"),
+                "start_price": round(start, 2),
+                "end_price": round(end, 2),
+                "pct_change": round((end / start - 1) * 100, 2),
+                "high_price": round(float(close.max()), 2),
+                "high_date": close.idxmax().strftime("%Y-%m-%d"),
+                "low_price": round(float(close.min()), 2),
+                "low_date": close.idxmin().strftime("%Y-%m-%d"),
+            }
+        )
+        series.append(
+            {
+                "symbol": symbol,
+                "dates": [d.strftime("%Y-%m-%d") for d in close.index],
+                "closes": [round(float(v), 2) for v in close],
+            }
+        )
+    return {
+        "period": inp.period,
+        "chart_shown_to_user": True,
+        "stocks": stocks,
+        "chart": {"period": inp.period, "series": series},
     }
 
 
@@ -190,6 +247,30 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "get_price_chart",
+        "description": (
+            "Draw a price chart for the user: one stock, or up to 5 stocks side by side, over the last 3 "
+            "months, 6 months or 1 year. The chart appears on the user's screen by itself; you get back only "
+            "each stock's start, end, high and low with dates. Use when the user asks to see, show, plot, "
+            "graph or compare prices over time."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": _SYMBOL_PROP,
+                    "minItems": 1,
+                    "maxItems": MAX_CHART_SYMBOLS,
+                    "description": "US stock tickers in capitals, e.g. ['AAPL', 'MSFT']",
+                },
+                "period": {"type": "string", "enum": ["3mo", "6mo", "1y"], "description": "Look-back period"},
+            },
+            "required": ["symbols"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "run_backtest",
         "description": (
             "Test how a simple, well-known trading rule would have worked on this stock over the last two "
@@ -213,6 +294,7 @@ _HANDLERS: dict[str, tuple[type[BaseModel], Callable]] = {
     "find_company": (FindCompanyInput, find_company),
     "get_stock_snapshot": (SymbolInput, get_stock_snapshot),
     "get_price_trend": (PriceTrendInput, get_price_trend),
+    "get_price_chart": (ChartInput, get_price_chart),
     "run_backtest": (BacktestInput, run_backtest),
 }
 

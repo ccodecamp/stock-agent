@@ -113,6 +113,102 @@ function addAssistantMessage() {
   return { wrap, steps, body };
 }
 
+// ---------------------------------------------------------------- charts
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs, text) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function shortDate(iso, withYear) {
+  const opts = { month: "short", day: "numeric", timeZone: "UTC" };
+  if (withYear) opts.year = "numeric";
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", opts);
+}
+
+function signedPct(n) {
+  return `${n >= 0 ? "+" : "-"}${Math.abs(n).toFixed(1)}%`;
+}
+
+// A line chart drawn from the daily closes the server sent. One stock shows dollars;
+// several are rebased to 100 at the start so their percentage moves can be compared.
+// Built with DOM calls and textContent only, so nothing from the data can inject HTML.
+function renderChart(chart) {
+  const raw = (chart.series || []).filter((s) => s.closes && s.closes.length > 1);
+  if (!raw.length) return null;
+  const multi = raw.length > 1;
+  const series = raw.map((s) => ({
+    symbol: s.symbol,
+    times: s.dates.map((d) => Date.parse(`${d}T00:00:00Z`)),
+    values: multi ? s.closes.map((v) => (v / s.closes[0]) * 100) : s.closes,
+    change: (s.closes[s.closes.length - 1] / s.closes[0] - 1) * 100,
+  }));
+
+  // Sized to the space available so the axis text stays readable on a phone (it does not redraw on resize).
+  const W = Math.max(300, Math.min(640, (log.clientWidth || 640) - 34));
+  const H = Math.round(W * (W < 480 ? 0.7 : 0.47));
+  const m = { l: W < 480 ? 48 : 58, r: 12, t: 12, b: 28 };
+  const allTimes = series.flatMap((s) => s.times);
+  const allValues = series.flatMap((s) => s.values);
+  const tMin = Math.min(...allTimes), tMax = Math.max(...allTimes);
+  let vMin = Math.min(...allValues), vMax = Math.max(...allValues);
+  const pad = (vMax - vMin || 1) * 0.08;
+  vMin -= pad;
+  vMax += pad;
+  const x = (t) => m.l + ((t - tMin) / (tMax - tMin || 1)) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - (v - vMin) / (vMax - vMin)) * (H - m.t - m.b);
+  const fmtY = (v) => (multi ? v.toFixed(0) : `$${v.toFixed(vMax - vMin < 20 ? 2 : 0)}`);
+
+  const firstISO = new Date(tMin).toISOString().slice(0, 10);
+  const lastISO = new Date(tMax).toISOString().slice(0, 10);
+  const summary = series.map((s) => `${s.symbol} ${signedPct(s.change)}`).join(", ");
+
+  const fig = el("figure", "chart");
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    role: "img",
+    "aria-label": `Price chart from ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}: ${summary}`,
+  });
+
+  for (let i = 0; i < 5; i++) {
+    const v = vMin + ((vMax - vMin) * i) / 4;
+    svg.append(svgEl("line", { class: "grid", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+    svg.append(svgEl("text", { class: "tick", x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, fmtY(v)));
+  }
+  [[tMin, "start"], [(tMin + tMax) / 2, "middle"], [tMax, "end"]].forEach(([t, anchor]) => {
+    const iso = new Date(t).toISOString().slice(0, 10);
+    svg.append(svgEl("text", { class: "tick", x: x(t), y: H - 8, "text-anchor": anchor }, shortDate(iso, true)));
+  });
+
+  series.forEach((s, i) => {
+    const points = s.times.map((t, j) => `${x(t).toFixed(1)},${y(s.values[j]).toFixed(1)}`).join(" ");
+    svg.append(svgEl("polyline", { class: `line s${(i % 5) + 1}`, points }));
+  });
+  fig.append(svg);
+
+  const legend = el("ul", "legend");
+  series.forEach((s, i) => {
+    const li = el("li");
+    li.append(el("span", `swatch s${(i % 5) + 1}`), el("strong", "", s.symbol), el("span", "", signedPct(s.change)));
+    legend.append(li);
+  });
+  fig.append(legend);
+  fig.append(
+    el(
+      "figcaption",
+      "",
+      multi
+        ? "Every line starts at 100, so you can compare percentage moves."
+        : `Daily closing prices, ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}.`,
+    ),
+  );
+  return fig;
+}
+
 // Friendly status lines for each tool, so people see the agent working.
 function describeTool(name, inp) {
   const sym = inp && inp.symbol;
@@ -125,6 +221,8 @@ function describeTool(name, inp) {
       const period = { "6mo": "6 months", "1y": "year", "2y": "2 years" }[inp && inp.period] || "year";
       return `Pulling ${sym}'s price over the last ${period}`;
     }
+    case "get_price_chart":
+      return `Drawing a chart of ${((inp && inp.symbols) || []).join(", ")}`;
     case "run_backtest":
       return `Testing a simple strategy on ${sym}'s history`;
     default:
@@ -205,6 +303,9 @@ async function send(text) {
       } else if (event.type === "tool_result") {
         const item = stepItems.find((s) => s.name === event.name && !s.li.className);
         if (item) item.li.className = event.ok ? "ok" : "fail";
+      } else if (event.type === "chart") {
+        const fig = renderChart(event);
+        if (fig) view.wrap.insertBefore(fig, view.body);
       } else if (event.type === "done") {
         history = [...turnMessages, ...event.messages];
         finished = true;

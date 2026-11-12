@@ -160,3 +160,77 @@ def test_mobile_layout_has_no_horizontal_scroll_and_composer_visible(chat, page)
     expect(page.locator(".msg.assistant .body")).to_contain_text("word")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     expect(page.locator("#composer")).to_be_in_viewport()
+
+
+# ---- charts ----
+
+
+def _series(symbol: str, start: float, step: float, days: int = 60) -> dict:
+    from datetime import date, timedelta
+
+    first = date(2026, 8, 17)
+    return {
+        "symbol": symbol,
+        "dates": [(first + timedelta(days=i)).isoformat() for i in range(days)],
+        "closes": [round(start + step * i + (i % 7) * 0.6, 2) for i in range(days)],
+    }
+
+
+def chart_answer(series: list[dict], text: str = "Here is the chart.") -> str:
+    return sse(
+        {"type": "tool_call", "name": "get_price_chart", "input": {"symbols": [s["symbol"] for s in series]}},
+        {"type": "tool_result", "name": "get_price_chart", "ok": True},
+        {"type": "chart", "period": "3mo", "series": series},
+        {"type": "text", "text": text},
+        {"type": "done", "messages": [{"role": "assistant", "content": [{"type": "text", "text": text}]}]},
+    )
+
+
+def test_single_stock_chart_is_drawn_above_the_answer(chat, page):
+    chat.reply(chart_answer([_series("NVDA", 170, 0.5)], "NVDA rose over the period."))
+    ask(page, "Show me a graph of Nvidia")
+    expect(page.locator(".chart svg polyline.line")).to_have_count(1)
+    expect(page.locator(".chart .legend li")).to_have_count(1)
+    expect(page.locator(".chart .legend")).to_contain_text("NVDA")
+    expect(page.locator(".chart .legend")).to_contain_text("+")
+    expect(page.locator(".steps li")).to_have_text(["Drawing a chart of NVDA"])
+    # The chart sits between the status lines and the text answer.
+    order = page.evaluate("[...document.querySelector('.msg.assistant').children].map(c => c.className.split(' ')[0])")
+    assert order == ["steps", "chart", "body"]
+    expect(page.locator(".msg.assistant .body")).to_have_text("NVDA rose over the period.")
+
+
+def test_comparison_chart_rebases_every_line_to_100(chat, page):
+    chat.reply(chart_answer([_series("AAPL", 200, 0.4), _series("MSFT", 450, -0.3), _series("TSLA", 300, 1.0)]))
+    ask(page, "Compare Apple, Microsoft and Tesla")
+    expect(page.locator(".chart svg polyline.line")).to_have_count(3)
+    expect(page.locator(".chart .legend li")).to_have_count(3)
+    expect(page.locator(".chart figcaption")).to_contain_text("starts at 100")
+    # Rebased axis: plain numbers around 100, not dollar prices.
+    ticks = page.locator(".chart .tick").all_text_contents()
+    assert not any(t.startswith("$") for t in ticks)
+    expect(page.locator(".chart .legend li").nth(1)).to_contain_text("-")  # MSFT fell
+
+
+def test_chart_with_no_usable_data_is_skipped_and_the_answer_still_shows(chat, page):
+    chat.reply(chart_answer([{"symbol": "NVDA", "dates": [], "closes": []}], "No chart, but here is text."))
+    ask(page, "graph it")
+    expect(page.locator(".msg.assistant .body")).to_have_text("No chart, but here is text.")
+    expect(page.locator(".chart")).to_have_count(0)
+
+
+def test_chart_fits_a_phone_screen(chat, page):
+    chat.reply(chart_answer([_series("AAPL", 200, 0.4), _series("MSFT", 450, -0.3)]))
+    page.set_viewport_size({"width": 375, "height": 812})
+    ask(page, "Compare Apple and Microsoft")
+    expect(page.locator(".chart svg")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    box = page.locator(".chart svg").bounding_box()
+    assert box["width"] > 250
+
+
+def test_hostile_symbol_text_is_not_rendered_as_html(chat, page):
+    chat.reply(chart_answer([_series("<img src=x onerror=window.pwned=1>", 100, 0.2)]))
+    ask(page, "graph")
+    expect(page.locator(".chart .legend")).to_contain_text("<img")
+    assert page.evaluate("window.pwned") is None

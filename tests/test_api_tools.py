@@ -48,6 +48,39 @@ def test_price_trend_math_is_consistent():
     assert 11 <= len(out["monthly_closes"]) <= 14
 
 
+def test_price_chart_returns_a_summary_for_claude_and_series_for_the_page():
+    out, err = _run("get_price_chart", {"symbols": ["NVDA", "AAPL"], "period": "3mo"})
+    assert not err
+    assert out["chart_shown_to_user"] is True
+    assert [s["symbol"] for s in out["chart"]["series"]] == ["NVDA", "AAPL"]
+    for series, stock in zip(out["chart"]["series"], out["stocks"], strict=True):
+        assert len(series["dates"]) == len(series["closes"]) == 63
+        assert stock["start_price"] == series["closes"][0]
+        assert stock["end_price"] == series["closes"][-1]
+        assert stock["end_date"] == series["dates"][-1]
+        assert stock["pct_change"] == pytest.approx((stock["end_price"] / stock["start_price"] - 1) * 100, abs=0.01)
+        assert stock["low_price"] <= stock["end_price"] <= stock["high_price"]
+
+
+@pytest.mark.parametrize(("period", "days"), [("3mo", 63), ("6mo", 126), ("1y", 252)])
+def test_price_chart_period_sets_the_number_of_points(period, days):
+    out, _ = _run("get_price_chart", {"symbols": ["NVDA"], "period": period})
+    assert len(out["chart"]["series"][0]["closes"]) == days
+
+
+def test_price_chart_drops_repeated_symbols_and_fetches_once(fake_prices):
+    out, err = _run("get_price_chart", {"symbols": ["NVDA", "NVDA"]})
+    assert not err
+    assert len(out["chart"]["series"]) == 1
+    assert fake_prices == ["NVDA"]
+
+
+def test_price_chart_with_one_unknown_ticker_is_an_error_naming_it():
+    out, err = _run("get_price_chart", {"symbols": ["NVDA", "NOPE"]})
+    assert err
+    assert "NOPE" in out["error"]
+
+
 def test_backtest_strategies_map_to_rules():
     dip, _ = _run("run_backtest", {"symbol": "NVDA", "strategy": "dip_buying"})
     trend, _ = _run("run_backtest", {"symbol": "NVDA", "strategy": "trend_following"})
@@ -70,6 +103,11 @@ def test_prices_are_cached_across_tools(fake_prices):
         ("run_backtest", {"symbol": "NVDA", "strategy": "moon"}),
         ("get_stock_snapshot", {"symbol": "NVDA", "extra": 1}),
         ("get_stock_snapshot", "not a dict"),
+        ("get_price_chart", {"symbols": []}),
+        ("get_price_chart", {"symbols": ["A", "B", "C", "D", "E", "F"]}),
+        ("get_price_chart", {"symbols": ["NVDA"], "period": "2y"}),
+        ("get_price_chart", {"symbols": "NVDA"}),
+        ("get_price_chart", {"symbols": ["nvda; drop"]}),
     ],
 )
 def test_invalid_input_is_an_error_result(name, inp):

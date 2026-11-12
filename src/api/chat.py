@@ -15,6 +15,7 @@ a history whose assistant turns were edited.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable, Iterator
@@ -42,6 +43,10 @@ How to answer:
 - If the user names a company, use find_company first unless you're sure of the ticker.
 - Always say which day a price is from, like "as of Nov 10". Tool results carry the date
   (as_of or end_date), and it is usually the last market close, not today's live price.
+- When someone asks to see, show, plot, graph or compare prices over time, call get_price_chart.
+  The chart appears on their screen by itself, so don't read out the data points: say in a few
+  sentences what it shows, with the dates. In a comparison every stock starts at the same level,
+  so the lines show percentage moves.
 - Explain in everyday words with simple analogies, the way you would to a curious friend.
 - Never use jargon. Banned words: RSI, Bollinger, SMA, moving average, golden cross,
   oversold, overbought, support, resistance, momentum, volatility, backtest.
@@ -69,6 +74,18 @@ def _tools_for_request() -> list[dict]:
     return [{**t, "eager_input_streaming": True} for t in TOOLS]
 
 
+def _split_chart(content: str) -> tuple[str, dict | None]:
+    """Chart data is for the page, not the model: strip it so Claude only sees the summary."""
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return content, None
+    if not isinstance(data, dict) or not isinstance(data.get("chart"), dict):
+        return content, None
+    chart = data.pop("chart")
+    return json.dumps(data), chart
+
+
 def _dump(blocks: list[Any]) -> list[dict]:
     """Serialize response content blocks so the client can send them back verbatim."""
     return [b.model_dump(mode="json", exclude_none=True) for b in blocks]
@@ -86,7 +103,8 @@ def stream_chat(
     text       {"text"}                 piece of Claude's answer
     tool_call  {"name", "input"}        Claude is calling a tool
     tool_result{"name", "ok"}           the tool finished
-    done       {"messages"}             new messages to append to the history
+    chart      {"period", "series"}     price series for the page to draw (never sent to Claude)
+    done      {"messages"}             new messages to append to the history
     error      {"message"}              something went wrong; turn is over
     """
     client = client or anthropic.Anthropic()
@@ -168,7 +186,12 @@ def stream_chat(
         for block in tool_uses:
             yield {"type": "tool_call", "name": block.name, "input": block.input}
             content, is_error = tool_runner(block.name, block.input)
+            chart = None
+            if not is_error:
+                content, chart = _split_chart(content)
             yield {"type": "tool_result", "name": block.name, "ok": not is_error}
+            if chart:
+                yield {"type": "chart", **chart}
             result = {"type": "tool_result", "tool_use_id": block.id, "content": content}
             if is_error:
                 result["is_error"] = True
