@@ -127,6 +127,43 @@ def test_answered_fails_on_error_or_empty_text():
     assert not graders.answered(_run("  ")).passed
 
 
+def _dated_call(**fields):
+    return [_call("get_stock_snapshot", {"symbol": "NVDA"}, {"close": 178.67, **fields})]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Nvidia closed at $178.67 as of Nov 10.",
+        "As of November 10, it was $178.67.",
+        "At the close on 10 Nov it was $178.67.",
+        "The close on Nov. 10th was $178.67.",
+        "Data from 2026-11-10: $178.67.",
+    ],
+)
+def test_names_date_accepts_common_ways_of_writing_the_data_date(text):
+    assert graders.names_date(_run(text, _dated_call(as_of="2026-11-10"))).passed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Nvidia is at $178.67.",  # no date at all
+        "It closed at $178.67 on Nov 9.",  # wrong date
+        "It closed at $178.67 on Nov 100.",  # day number only matches as a prefix
+        "It closed at $178.67 on Nov 1.",
+    ],
+)
+def test_names_date_rejects_missing_or_wrong_dates(text):
+    assert not graders.names_date(_run(text, _dated_call(as_of="2026-11-10"))).passed
+
+
+def test_names_date_uses_end_date_from_trend_results_and_fails_without_any_date():
+    trend = [_call("get_price_trend", {}, {"end_price": 95.0, "end_date": "2026-11-10"})]
+    assert graders.names_date(_run("It ended at $95 on Nov 10.", trend)).passed
+    assert not graders.names_date(_run("It's $95.", [_call("find_company", {}, {"matches": []})])).passed
+
+
 # ---- fixtures ----
 
 

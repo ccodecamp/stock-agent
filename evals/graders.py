@@ -11,6 +11,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 
 from .fixtures import ToolCallRecord
 
@@ -217,11 +218,46 @@ def covers_symbols(run: Run, arg) -> Result:
     return _fail(f"no data fetched for {missing}") if missing else _ok()
 
 
+_DATE_KEYS = {"as_of", "end_date"}
+
+
+def _dates_in(value, out: set[date], key: str = "") -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _dates_in(v, out, k)
+    elif isinstance(value, list):
+        for v in value:
+            _dates_in(v, out, key)
+    elif isinstance(value, str) and key in _DATE_KEYS:
+        out.add(date.fromisoformat(value))
+
+
+def _date_pattern(d: date) -> re.Pattern:
+    """Matches 'Nov 10', 'November 10th', 'Nov. 10', '10 Nov', '10th of November' or '2026-11-10'."""
+    mon = d.strftime("%B")
+    month = rf"(?:{mon}|{mon[:3]}\.?)"
+    day = rf"0?{d.day}(?:st|nd|rd|th)?"
+    return re.compile(rf"\b{month}\s+{day}\b|\b{day}\s+(?:of\s+)?{month}|{d.isoformat()}", re.IGNORECASE)
+
+
+def names_date(run: Run, arg=None) -> Result:
+    """The answer must say which day the price data is from, matching a date in the tool results."""
+    dates: set[date] = set()
+    for call in run.tool_calls:
+        if not call.is_error:
+            _dates_in(json.loads(call.output), dates)
+    if not dates:
+        return _fail("no tool result carried a date to compare against")
+    if any(_date_pattern(d).search(run.text) for d in dates):
+        return _ok()
+    return _fail(f"no mention of the data date; expected one of {sorted(d.isoformat() for d in dates)}")
+
+
 CHECKS: dict[str, Callable[..., Result]] = {
     f.__name__: f
     for f in (
         answered, no_banned_words, no_advice, plain_text, numbers_grounded, no_numbers,
-        calls_tool, never_calls, calls_no_tools, tool_input, covers_symbols,
+        calls_tool, never_calls, calls_no_tools, tool_input, covers_symbols, names_date,
     )
 }  # fmt: skip
 
