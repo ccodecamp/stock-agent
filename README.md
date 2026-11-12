@@ -1,142 +1,79 @@
-# Stock Predictor Agent
+# Stock Guide
 
-A small, honest monthly stock-analysis agent. It pulls American equity
-prices, computes technical indicators, asks Claude to narrate the context,
-and emails you the digest via Gmail.
+A plain-English chat agent for US stocks. Ask "How's Nvidia doing?" and Claude decides which
+tools to call (company lookup, price snapshot, price trend, strategy test), then explains the
+numbers the way you would to a friend who has never invested. No jargon, no predictions, no advice.
 
-> **This is not a prediction engine and not investment advice.** It surfaces
-> where each stock sits relative to its own history. You make the calls.
+**Try it:** https://stock-agent-production-4e16.up.railway.app/ (a small demo that may be busy.
+If it is, run it locally below.)
 
-## What it does
+> Not a prediction engine and not investment advice. It describes what has happened.
 
-Once a month (or on demand):
-
-1. Fetches ~2 years of OHLCV data for every ticker in `config/watchlist.yaml` (default: AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA).
-2. Computes RSI(14), 50/200-day SMAs, Bollinger Bands, ATR, and 52-week high/low — deterministically, in Python.
-3. Sends the indicator snapshot to Claude, which writes a short narrative per ticker (current context, signals, watch zone, what would invalidate the read).
-4. Saves the digest as Markdown in `reports/` and emails it to you via Gmail SMTP.
-5. Optionally runs a transparent backtester so you can see how naive rules have actually performed on your tickers.
-
-## Architecture
+## How it works
 
 ```
-config/watchlist.yaml
-        │
-        ▼
-data_fetcher.py ──► indicators.py ──► agent.py (Claude) ──► notifier.py (Gmail SMTP)
-                                            │
-                                            └──► reports/digest-YYYY-MM-DD.md
+browser (web/, plain HTML/JS) ──SSE──► FastAPI (src/api/)
+                                          │  tool-use loop (chat.py)
+                                          ▼
+                                   Claude ◄──► tools.py ──► yfinance + indicators (Python)
 ```
 
-## Quick start
+- **Python computes, Claude explains.** Every number comes from deterministic code in `src/`
+  (`indicators.py`, `backtest.py`). Claude only interprets tool results, so the math is auditable and testable.
+- **Hand-written tool-use loop** in `src/api/chat.py`: streams text, emits an event per tool call,
+  caps round trips, and handles refusals and malformed tool input.
+- **Stateless server.** The client keeps the conversation and sends it back each turn.
+- **Tool inputs are validated** with pydantic before anything runs.
+- **Plain English is enforced** by the system prompt, and checked by the evals below.
+
+The repo also contains the original monthly email digest (`src/main.py`). See [docs/email-digest.md](docs/email-digest.md).
+
+## Run it locally
+
+Needs Python 3.10+ and an [Anthropic API key](https://console.anthropic.com/) (set a spending cap there first).
 
 ```bash
-git clone <YOUR-REPO-URL> stock-predictor
-cd stock-predictor
+git clone https://github.com/ccodecamp/stock-agent.git
+cd stock-agent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edit .env with your API key + Gmail creds. Keep DRY_RUN=true for the first run.
-
-python -m src.main --dry --backtest
-```
-
-## Email setup (Gmail)
-
-1. Turn on **2-Step Verification** on your Google account: https://myaccount.google.com/security
-2. Create an **App Password**: https://myaccount.google.com/apppasswords
-   - Pick "Mail" and "Other (Custom name)" → name it `stock-agent`
-   - Google shows you a 16-character password ONE TIME. Copy it now.
-3. Paste it into `.env` as `GMAIL_APP_PASSWORD`. Spaces are stripped automatically.
-4. Set `GMAIL_USER` and `EMAIL_TO` to your Gmail address (they can be the same — emailing yourself is the common case).
-5. Keep `DRY_RUN=true` until your first run prints the message you want.
-
-> App passwords work only on accounts with 2-Step Verification enabled. If the
-> "App passwords" page is missing for you, your account is either a Workspace
-> account that disables them, or 2-Step Verification isn't fully on yet.
-
-## Anthropic API setup
-
-1. Create a key at https://console.anthropic.com/
-2. **Set a spending cap** on the same dashboard (Plans & Billing → Usage Limits). Recommended: $5/month. The default watchlist costs ~$0.10/month on Sonnet.
-3. Paste the key into `.env` as `ANTHROPIC_API_KEY`.
-
-## Scheduling
-
-Local cron — simplest:
-
-```cron
-0 9 1 * * /path/to/stock-predictor/scripts/run_monthly.sh
-```
-
-Runs 9am on the 1st of each month, but only when your machine is awake.
-For more reliable scheduling, run it as a GitHub Actions cron — ask Claude
-for the workflow file when you're ready.
-
-## Web chat (local)
-
-A conversational version: ask "How's Nvidia?" and Claude decides which tools
-to call (company lookup, price snapshot, price trend, strategy test).
-
-```bash
-# Needs ANTHROPIC_API_KEY in .env
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 uvicorn src.api.app:app --port 8000
 ```
 
-Open http://localhost:8000. The API also serves the frontend (plain HTML/JS in
-`web/`, no build step), so one process runs everything and the page calls the
-API on the same origin.
+Open http://localhost:8000. One process serves both the API and the UI; there is no build step.
 
-## Deploy (Railway)
-
-The `Dockerfile` builds one image that serves the API and the web UI. Railway
-detects a root `Dockerfile` automatically. Nothing else is configured in code
-(Railway is retiring `railway.json`/`railway.toml`), so these settings live in
-the Railway dashboard:
-
-| Where | Setting | Value |
-|---|---|---|
-| Service → Variables | `ANTHROPIC_API_KEY` | your key (never commit it) |
-| Service → Variables | `CHAT_RATE_LIMIT` | optional, e.g. `30/minute` |
-| Service → Settings | Healthcheck path | `/api/health` |
-| Service → Settings → Networking | Public Networking | Generate Domain |
-
-Known limitation: behind Railway's proxy every request arrives from the proxy's
-address, so the per-IP rate limit is effectively one limit shared by all users.
-See the note at the top of `src/api/app.py`.
-
-## Security
-
-See [SECURITY.md](SECURITY.md). Short version:
-- Secrets live in `.env`, which is git-ignored.
-- `gitleaks` runs as a pre-commit hook *and* in CI.
-- `pip-audit` flags vulnerable dependencies in CI.
-- `DRY_RUN=true` is the safe default.
-
-```bash
-pre-commit install   # enable hooks locally
-```
+Optional environment variables: `CHAT_MODEL` (default `claude-sonnet-5-5`), `CHAT_EFFORT`, `CHAT_RATE_LIMIT` (default `10/minute`).
 
 ## Tests
 
-```bash
-pytest
-```
+Three layers, each catching a different kind of failure:
 
-## Why Python (not Java)
+| Layer | Command | What it catches | Cost |
+|---|---|---|---|
+| Unit | `pytest` | Logic bugs in tools, indicators, API, and the graders themselves | Free |
+| Browser | `pip install -r requirements-e2e.txt && playwright install chromium && pytest tests_e2e -o addopts=""` | UI bugs: streaming, error messages, history, mobile layout (API stubbed) | Free |
+| Evals | `python -m evals.run_evals --runs 3` | Bad answers from the real model: jargon, advice, invented numbers, wrong tool choice | Uses API credits |
 
-Finance/ML libraries (`yfinance`, `pandas`, `ta`, `numpy`) and the Anthropic
-SDK are far more mature in Python. For a monthly batch job, JVM performance
-buys you nothing and Python ships in roughly a third the lines of code.
+Evals run the real Claude against frozen fake tool data and grade each answer with code checks.
+See [evals/README.md](evals/README.md) for how cases and graders work.
 
-## License
+## Contributing
 
-MIT — see [LICENSE](LICENSE). In short: do whatever you want with it, but no warranty, and don't blame me if your trades go sideways.
+Contributions are welcome, including small ones. Start with [CONTRIBUTING.md](CONTRIBUTING.md),
+then look for issues labelled `good first issue`. A great first contribution is a new eval case:
+find a question where the agent answers badly and turn it into a test.
 
-## Disclaimers
+## More docs
 
-- Past indicator behavior does not predict future returns.
-- Indicator values from yfinance occasionally lag or differ from your broker.
-- The agent is conservative by design: it describes context, it doesn't recommend trades.
+- [docs/email-digest.md](docs/email-digest.md): the original monthly email digest
+- [SECURITY.md](SECURITY.md): threat model and hardening
+
+## License and disclaimers
+
+MIT, see [LICENSE](LICENSE).
+
+- Past behaviour does not predict future returns.
+- Price data comes from Yahoo Finance via yfinance, which can lag or differ from your broker.
 - The author is not your financial advisor.
