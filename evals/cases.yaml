@@ -7,6 +7,7 @@
   question: "How's Nvidia doing?"
   checks:
     - calls_tool: get_stock_snapshot
+    - names_date  # the price must be dated, like "as of Nov 10" (issue #9)
 
 - id: apple_100_dollars
   category: normal
