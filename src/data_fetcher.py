@@ -46,7 +46,9 @@ def fetch_history(symbol: str, lookback_years: int = 2) -> PriceHistory:
     df = yf.download(
         symbol,
         start=start.strftime("%Y-%m-%d"),
-        end=end.strftime("%Y-%m-%d"),
+        # yfinance treats `end` as exclusive: ending at today's UTC date drops today's bar, so
+        # after the US close (21:00 UTC) the newest close went missing. Ask through tomorrow.
+        end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
         progress=False,
         auto_adjust=True,
     )
