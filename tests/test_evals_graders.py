@@ -199,6 +199,16 @@ def test_chart_fixture_serves_summaries_only_and_rejects_bad_input():
     assert tools("get_price_chart", {"symbols": []})[1] is True
 
 
+def test_chart_fixture_never_dates_a_high_or_low_after_the_data_ends():
+    # Both models flagged "Apple's high on Nov 15" as a data error when the data ends on Nov 10.
+    tools = FixtureTools()
+    for symbol in ("NVDA", "AAPL", "MSFT", "TSLA", "NKE"):
+        for period in ("3mo", "6mo", "1y"):
+            for stock in json.loads(tools("get_price_chart", {"symbols": [symbol], "period": period})[0])["stocks"]:
+                assert stock["high_date"] <= stock["end_date"], (symbol, period)
+                assert stock["low_date"] <= stock["end_date"], (symbol, period)
+
+
 def test_covers_symbols_understands_a_chart_call_with_several_symbols():
     run = _run("x", [_call("get_price_chart", {"symbols": ["AAPL", "MSFT"], "period": "1y"})])
     assert graders.covers_symbols(run, ["AAPL", "MSFT"]).passed
