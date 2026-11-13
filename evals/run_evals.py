@@ -12,16 +12,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 
+import anthropic
 import yaml
 from dotenv import load_dotenv
 
-from src.api.chat import stream_chat
+from src.api.chat import DEFAULT_MODEL, stream_chat
 
 from .fixtures import FixtureTools
 from .graders import CHECKS, DEFAULT_CHECKS, Run
+from .usage import RecordingClient, Usage, format_cost
 
 HERE = Path(__file__).resolve().parent
 
@@ -39,6 +42,7 @@ def parse_check(spec) -> tuple[str, object]:
 
 
 def run_case_once(case: dict, **chat_kwargs) -> Run:
+    """chat_kwargs go to stream_chat (model=, client=, ...)."""
     tools = FixtureTools()
     text, error = [], None
     for event in stream_chat([{"role": "user", "content": case["question"]}], tool_runner=tools, **chat_kwargs):
@@ -71,13 +75,19 @@ def main() -> None:
     if not cases:
         raise SystemExit(f"no case with id {args.case!r}")
 
+    model = args.model or os.environ.get("CHAT_MODEL", DEFAULT_MODEL)
+    client = anthropic.Anthropic()
     records, by_category = [], defaultdict(lambda: [0, 0])
-    print(f"{len(cases)} cases x {args.runs} runs\n")
+    total_usage = Usage()
+    print(f"{len(cases)} cases x {args.runs} runs on {model}\n")
     for case in cases:
         failures: dict[str, list[str]] = defaultdict(list)
         passed_runs = 0
+        case_usage = Usage()
         for i in range(args.runs):
-            run = run_case_once(case, model=args.model)
+            recorder = RecordingClient(client)
+            run = run_case_once(case, client=recorder, model=args.model)
+            case_usage.add(recorder.usage)
             graded = grade(case, run)
             ok = all(g["passed"] for g in graded.values())
             passed_runs += ok
@@ -87,8 +97,15 @@ def main() -> None:
                 if not g["passed"]:
                     failures[name].append(g["detail"])
             records.append({"case": case["id"], "run": i, "text": run.text, "graded": graded,
-                            "tools": [{"name": c.name, "input": c.input} for c in run.tool_calls]})  # fmt: skip
-        print(f"{'PASS' if passed_runs == args.runs else 'FAIL'}  {case['id']:<22} {passed_runs}/{args.runs} runs")
+                            "tools": [{"name": c.name, "input": c.input} for c in run.tool_calls],
+                            "usage": recorder.usage.to_dict()})  # fmt: skip
+        total_usage.add(case_usage)
+        case_cost = case_usage.cost(model)
+        cost_note = f"  ${case_cost / args.runs:.4f}/run" if case_cost is not None else ""
+        print(
+            f"{'PASS' if passed_runs == args.runs else 'FAIL'}  {case['id']:<22} "
+            f"{passed_runs}/{args.runs} runs{cost_note}"
+        )
         for name, details in failures.items():
             print(f"        - {name} failed {len(details)}x, e.g. {details[0]}")
 
@@ -98,6 +115,15 @@ def main() -> None:
     total_ok = sum(v[0] for v in by_category.values())
     total = sum(v[1] for v in by_category.values())
     print(f"  {'overall':<12} {total_ok}/{total}  ({100 * total_ok / total:.0f}%)")
+
+    runs_total = len(cases) * args.runs
+    print(
+        f"\nUsage on {model}: {total_usage.calls} API calls, {total_usage.input_tokens:,} input + "
+        f"{total_usage.output_tokens:,} output tokens"
+    )
+    print(f"Cost: {format_cost(total_usage, model, runs_total)}")
+    if total_usage.cache_tokens:
+        print(f"  Note: {total_usage.cache_tokens:,} cache tokens are not priced, so this undercounts.")
 
     out = HERE / "results" / "latest.json"
     out.parent.mkdir(exist_ok=True)
