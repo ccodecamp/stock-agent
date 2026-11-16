@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+# The last day of data in every fixture. A high or low can never be dated after it.
+END_DATE = "2026-11-10"
+
 _MONTHS = [
     "2025-12",
     "2026-01",
@@ -152,14 +155,14 @@ def _chart(symbols: object, period: str) -> tuple[dict, bool]:
             {
                 "symbol": symbol,
                 "start_date": f"{labels[0]}-01",
-                "end_date": "2026-11-10",
+                "end_date": END_DATE,
                 "start_price": closes[0],
                 "end_price": closes[-1],
                 "pct_change": _pct(closes[-1], closes[0]),
                 "high_price": closes[hi],
-                "high_date": f"{labels[hi]}-15",
+                "high_date": min(f"{labels[hi]}-15", END_DATE),
                 "low_price": closes[lo],
-                "low_date": f"{labels[lo]}-15",
+                "low_date": min(f"{labels[lo]}-15", END_DATE),
             }
         )
     return {"period": period, "chart_shown_to_user": True, "stocks": stocks}, False

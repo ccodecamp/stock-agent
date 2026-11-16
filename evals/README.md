@@ -14,10 +14,15 @@ pytest tests/test_evals_graders.py                 # tests of the graders themse
 | `cases.yaml` | Questions plus the checks each answer must pass |
 | `fixtures.py` | Frozen tool data (invented, not market data) |
 | `graders.py` | Deterministic checks: jargon, advice, markdown, invented numbers, tool choice |
-| `run_evals.py` | Runs cases, prints pass rates, writes `results/latest.json` (git-ignored) |
+| `run_evals.py` | Runs cases, prints pass rates and cost, writes `results/latest.json` (git-ignored) |
+| `usage.py` | Counts tokens and dollars per run (wraps the API client; app code is untouched) |
 
 Every case gets the default checks (`answered`, `no_banned_words`, `no_advice`, `plain_text`,
 `numbers_grounded`) plus any it lists.
+
+**Cost:** every run prints tokens and dollars (per case, and in total). `--model claude-haiku-5-5` compares models
+on the same cases. The price table in `usage.py` is typed in by hand and dated, so check it against Anthropic's
+pricing page. A model with no entry shows tokens only.
 
 **Reading a failure:** open `results/latest.json`, then decide which it is: an agent bug
 (fix the prompt or tools), a grader bug (fix the grader and add a unit test), or a bad case.
