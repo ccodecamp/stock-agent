@@ -363,3 +363,8 @@ newChatBtn.addEventListener("click", () => {
   newChatBtn.hidden = true;
   input.focus();
 });
+
+// Lets the page be installed on a phone's home screen. Skipped on file:// and old browsers.
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
