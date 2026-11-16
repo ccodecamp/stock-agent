@@ -85,6 +85,13 @@ def test_iphone_home_screen_pieces_are_in_the_page(client):
     assert "viewport-fit=cover" in html  # without it the safe-area insets are always 0
 
 
+def test_browser_tab_favicon_is_linked_and_served(client):
+    html = client.get("/").text
+    for href in ("icons/icon.svg", "icons/icon-192.png"):
+        assert 'rel="icon"' in html and f'href="{href}"' in html
+        assert client.get(f"/{href}").status_code == 200
+
+
 def test_service_worker_is_served_from_the_root_so_it_covers_the_whole_app(client):
     r = client.get("/sw.js")
     assert r.status_code == 200
