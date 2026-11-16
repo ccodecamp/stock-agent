@@ -61,3 +61,38 @@ def test_dockerfile_never_copies_env_files():
     copies = [line for line in dockerfile.splitlines() if line.strip().startswith(("COPY", "ADD"))]
     assert copies, "expected COPY instructions"
     assert not any(".env" in line for line in copies)
+
+
+def test_manifest_is_served_and_its_icons_exist(client):
+    r = client.get("/manifest.webmanifest")
+    assert r.status_code == 200
+    manifest = r.json()
+    assert manifest["display"] == "standalone"
+    assert manifest["start_url"] == "/"
+    sizes = {icon["sizes"] for icon in manifest["icons"]}
+    assert {"192x192", "512x512"} <= sizes
+    for icon in manifest["icons"]:
+        served = client.get("/" + icon["src"])
+        assert served.status_code == 200, icon["src"]
+        assert served.content.startswith(b"\x89PNG"), icon["src"]
+
+
+def test_iphone_home_screen_pieces_are_in_the_page(client):
+    html = client.get("/").text
+    assert 'rel="manifest"' in html
+    assert 'rel="apple-touch-icon" href="icons/icon-180.png"' in html
+    assert client.get("/icons/icon-180.png").status_code == 200
+    assert "viewport-fit=cover" in html  # without it the safe-area insets are always 0
+
+
+def test_service_worker_is_served_from_the_root_so_it_covers_the_whole_app(client):
+    r = client.get("/sw.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+
+
+def test_service_worker_never_touches_api_calls():
+    # Chat answers and prices must always be live, so /api must be skipped before any caching.
+    sw = (ROOT / "web" / "sw.js").read_text()
+    assert 'startsWith("/api/")' in sw
+    assert 'request.method !== "GET"' in sw
