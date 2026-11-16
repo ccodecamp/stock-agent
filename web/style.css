@@ -65,7 +65,20 @@ body {
 }
 
 .top-actions { display: flex; gap: 8px; flex: none; }
-#chats-toggle { display: none; }
+.top-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.icon-btn {
+  display: none;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+}
+.icon-btn:hover { border-color: var(--muted); }
 
 h1 { margin: 0; font-size: 1.35rem; letter-spacing: -0.01em; }
 .sub { margin: 2px 0 0; color: var(--muted); font-size: 0.92rem; }
@@ -282,7 +295,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 
 /* Narrow screens: the list becomes a drawer opened from the Chats button. */
 @media (max-width: 899px) {
-  #chats-toggle { display: inline-block; }
+  #chats-toggle { display: grid; }
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;

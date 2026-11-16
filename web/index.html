@@ -32,12 +32,16 @@
   <div id="backdrop" class="backdrop" hidden></div>
   <div class="app">
     <header class="top">
-      <div>
-        <h1>Stock Guide</h1>
-        <p class="sub">Ask how any US stock is doing, in plain English.</p>
+      <div class="top-title">
+        <button type="button" id="chats-toggle" class="icon-btn" aria-label="Your chats" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div>
+          <h1>Stock Guide</h1>
+          <p class="sub">Ask how any US stock is doing, in plain English.</p>
+        </div>
       </div>
       <div class="top-actions">
-        <button type="button" id="chats-toggle" class="ghost" aria-controls="sidebar" aria-expanded="false">Chats</button>
         <button type="button" id="new-chat" class="ghost" hidden>New chat</button>
       </div>
     </header>

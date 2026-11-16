@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from .conftest import answer, sse
@@ -238,3 +239,30 @@ def test_on_a_phone_the_page_never_scrolls_sideways(chat, page):
     two_chats(chat, page)
     page.locator("#chats-toggle").click()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+# ---- the menu button has to be findable on every phone size, portrait and landscape ----
+
+
+@pytest.mark.parametrize("size", [(360, 740), (375, 812), (390, 844), (412, 869), (844, 390), (869, 412)])
+def test_phone_users_get_a_hamburger_that_opens_the_list(chat, page, size):
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    two_chats(chat, page)
+    menu = page.get_by_role("button", name="Your chats")
+    expect(menu).to_be_visible()
+    box = menu.bounding_box()
+    assert box["x"] >= 0 and box["x"] + box["width"] <= size[0], "button is off the screen"
+    assert box["y"] >= 0 and box["height"] >= 44 and box["width"] >= 44, "too small to tap"
+    menu.click()
+    expect(page.locator("#sidebar")).to_be_visible()
+    expect(page.locator(ROWS)).to_have_count(2)
+    page.locator(ROWS).nth(1).click()
+    expect(page.locator(".msg.user")).to_have_text("How's Nvidia?")
+    expect(page.locator("#sidebar")).to_be_hidden()
+
+
+def test_the_hamburger_is_at_the_start_of_the_header_before_the_title(chat, page):
+    page.set_viewport_size({"width": 390, "height": 844})
+    menu = page.get_by_role("button", name="Your chats").bounding_box()
+    title = page.locator("h1").bounding_box()
+    assert menu["x"] < title["x"]
