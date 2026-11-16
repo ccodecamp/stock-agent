@@ -18,13 +18,28 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 </head>
 <body>
+  <div class="shell">
+  <aside id="sidebar" class="sidebar" aria-label="Your chats">
+    <div class="side-head">
+      <h2>Your chats</h2>
+      <button type="button" id="close-sidebar" class="ghost">Close</button>
+    </div>
+    <ul id="chat-list" class="chat-list"></ul>
+    <p id="no-chats" class="side-note">Your chats will show up here.</p>
+    <p id="save-warning" class="side-note warn" hidden>This browser wouldn't let us save chats, so they'll be gone when you close the page.</p>
+    <p class="side-note">Chats are saved on this device only.</p>
+  </aside>
+  <div id="backdrop" class="backdrop" hidden></div>
   <div class="app">
     <header class="top">
       <div>
         <h1>Stock Guide</h1>
         <p class="sub">Ask how any US stock is doing, in plain English.</p>
       </div>
-      <button type="button" id="new-chat" class="ghost" hidden>New chat</button>
+      <div class="top-actions">
+        <button type="button" id="chats-toggle" class="ghost" aria-controls="sidebar" aria-expanded="false">Chats</button>
+        <button type="button" id="new-chat" class="ghost" hidden>New chat</button>
+      </div>
     </header>
 
     <main id="log" class="log" aria-live="polite">
@@ -45,6 +60,7 @@
       <button type="submit" id="send">Send</button>
     </form>
     <p class="disclaimer">Describes what has happened, not what will. Not investment advice.</p>
+  </div>
   </div>
   <script src="app.js"></script>
 </body>

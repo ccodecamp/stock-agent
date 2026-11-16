@@ -22,8 +22,79 @@ const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 const newChatBtn = document.getElementById("new-chat");
 
-let history = [];
+const sidebar = document.getElementById("sidebar");
+const backdrop = document.getElementById("backdrop");
+const chatList = document.getElementById("chat-list");
+const noChats = document.getElementById("no-chats");
+const saveWarning = document.getElementById("save-warning");
+const chatsToggle = document.getElementById("chats-toggle");
+const closeSidebarBtn = document.getElementById("close-sidebar");
+
 let busy = false;
+
+// ---------------------------------------------------------------- saved chats
+//
+// Chats live in this browser's localStorage (no accounts, nothing stored on the server).
+// A chat is {id, title, updated, history, charts}. `history` is exactly what the server
+// needs back each turn; `charts` are saved too because chart data never enters `history`.
+
+const STORE_KEY = "stock-guide-chats-v1";
+const MAX_CHATS = 30;
+
+function isChat(c) {
+  return c && typeof c.id === "string" && typeof c.title === "string" && Array.isArray(c.history);
+}
+
+// Never throws: a missing, blocked or corrupt store just means "no saved chats".
+function readStore() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
+    return Array.isArray(data) ? data.filter(isChat).map((c) => ({ ...c, charts: c.charts || [] })) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// Newest first, capped at MAX_CHATS. If the browser's quota is full, drops the oldest chat
+// and tries again. Returns the chats that were really kept, or null if nothing could be saved.
+function writeStore(chats) {
+  let keep = [...chats].sort((a, b) => b.updated - a.updated).slice(0, MAX_CHATS);
+  for (;;) {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(keep));
+      return keep;
+    } catch (_) {
+      if (!keep.length) return null;
+      keep = keep.slice(0, -1);
+    }
+  }
+}
+
+function newChat() {
+  return { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), title: "", updated: 0, history: [], charts: [] };
+}
+
+function titleFrom(text) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 60 ? `${flat.slice(0, 59)}…` : flat;
+}
+
+let chats = readStore();
+let current = newChat();
+
+// Re-reads the store first so a second open tab's chats are not overwritten.
+function saveChat(chat) {
+  const stored = writeStore([chat, ...readStore().filter((c) => c.id !== chat.id)]);
+  saveWarning.hidden = stored !== null;
+  if (stored) chats = stored;
+}
+
+function deleteChat(id) {
+  const stored = writeStore(readStore().filter((c) => c.id !== id));
+  chats = stored || [];
+  if (current.id === id) startNewChat();
+  else renderList();
+}
 
 // ---------------------------------------------------------------- rendering
 
@@ -271,7 +342,10 @@ async function send(text) {
 
   addUserMessage(text);
   const view = addAssistantMessage();
-  const turnMessages = [...history, { role: "user", content: text }];
+  const chat = current;
+  const turnMessages = [...chat.history, { role: "user", content: text }];
+  const turn = turnMessages.filter((m) => userText(m) !== null).length - 1;
+  const turnCharts = []; // kept only if the turn finishes, like the history
   const stepItems = [];
   let answer = "";
 
@@ -306,8 +380,14 @@ async function send(text) {
       } else if (event.type === "chart") {
         const fig = renderChart(event);
         if (fig) view.wrap.insertBefore(fig, view.body);
+        turnCharts.push({ turn, chart: event });
       } else if (event.type === "done") {
-        history = [...turnMessages, ...event.messages];
+        chat.history = [...turnMessages, ...event.messages];
+        chat.charts = [...chat.charts, ...turnCharts];
+        chat.title = chat.title || titleFrom(text);
+        chat.updated = Date.now();
+        saveChat(chat);
+        renderList();
         finished = true;
       } else if (event.type === "error") {
         showError(event.message);
@@ -355,14 +435,142 @@ document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => send(chip.textContent));
 });
 
-newChatBtn.addEventListener("click", () => {
-  if (busy) return;
-  history = [];
+// ---------------------------------------------------------------- chat list
+
+// A person's own message (a string, or blocks containing text), as opposed to the
+// tool results the API also sends with role "user". Returns null for those.
+function userText(m) {
+  if (m.role !== "user") return null;
+  if (typeof m.content === "string") return m.content;
+  const text = (Array.isArray(m.content) ? m.content : []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  return text || null;
+}
+
+function assistantText(m) {
+  if (typeof m.content === "string") return m.content;
+  return (Array.isArray(m.content) ? m.content : []).filter((b) => b.type === "text").map((b) => b.text).join("");
+}
+
+function clearLog() {
   log.querySelectorAll(".msg").forEach((m) => m.remove());
+}
+
+// Rebuilds a saved conversation: one question and one answer per turn. The "looking up…"
+// steps are not kept, only the words and charts.
+function renderSaved(chat) {
+  clearLog();
+  const turns = [];
+  for (const m of chat.history) {
+    const asked = userText(m);
+    if (asked !== null) turns.push({ asked, parts: [] });
+    else if (m.role === "assistant" && turns.length) {
+      const said = assistantText(m);
+      if (said) turns[turns.length - 1].parts.push(said);
+    }
+  }
+  turns.forEach((t, i) => {
+    addUserMessage(t.asked);
+    const wrap = el("div", "msg assistant");
+    for (const c of chat.charts.filter((c) => c.turn === i)) {
+      const fig = renderChart(c.chart);
+      if (fig) wrap.append(fig);
+    }
+    const body = el("div", "body");
+    body.innerHTML = renderMarkdown(t.parts.join("\n\n"));
+    wrap.append(body);
+    log.append(wrap);
+  });
+  empty.hidden = turns.length > 0;
+  newChatBtn.hidden = turns.length === 0;
+  scrollToBottom();
+}
+
+function renderList() {
+  chatList.replaceChildren();
+  noChats.hidden = chats.length > 0;
+  for (const c of chats) {
+    const li = el("li", c.id === current.id ? "chat-row current" : "chat-row");
+    const open = el("button", "chat-open", c.title || "Untitled chat");
+    open.type = "button";
+    if (c.id === current.id) open.setAttribute("aria-current", "true");
+    open.addEventListener("click", () => openChat(c.id));
+
+    // Two taps to delete, so a stray touch can't lose a conversation.
+    const del = el("button", "chat-del", "✕");
+    del.type = "button";
+    del.setAttribute("aria-label", `Delete chat: ${c.title}`);
+    let timer;
+    del.addEventListener("click", () => {
+      if (del.classList.contains("armed")) {
+        clearTimeout(timer);
+        if (busy && c.id === current.id) return;
+        deleteChat(c.id);
+        return;
+      }
+      del.classList.add("armed");
+      del.textContent = "Delete?";
+      del.setAttribute("aria-label", `Confirm delete: ${c.title}`);
+      timer = setTimeout(() => {
+        del.classList.remove("armed");
+        del.textContent = "✕";
+        del.setAttribute("aria-label", `Delete chat: ${c.title}`);
+      }, 3000);
+    });
+    li.append(open, del);
+    chatList.append(li);
+  }
+}
+
+function openChat(id) {
+  if (busy) return;
+  const chat = chats.find((c) => c.id === id);
+  if (chat && chat.id !== current.id) {
+    current = chat;
+    renderSaved(chat);
+    renderList();
+  }
+  closeSidebar();
+  input.focus();
+}
+
+function startNewChat() {
+  if (busy) return;
+  current = newChat();
+  clearLog();
   empty.hidden = false;
   newChatBtn.hidden = true;
+  renderList();
+  closeSidebar();
   input.focus();
+}
+
+// On a phone the list is a drawer; on a wide screen it is always showing and these do nothing visible.
+function openSidebar() {
+  sidebar.classList.add("open");
+  backdrop.hidden = false;
+  chatsToggle.setAttribute("aria-expanded", "true");
+}
+
+function closeSidebar() {
+  sidebar.classList.remove("open");
+  backdrop.hidden = true;
+  chatsToggle.setAttribute("aria-expanded", "false");
+}
+
+newChatBtn.addEventListener("click", startNewChat);
+chatsToggle.addEventListener("click", openSidebar);
+closeSidebarBtn.addEventListener("click", closeSidebar);
+backdrop.addEventListener("click", closeSidebar);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeSidebar();
 });
+// Another tab saved or deleted a chat.
+window.addEventListener("storage", (e) => {
+  if (e.key !== STORE_KEY) return;
+  chats = readStore();
+  renderList();
+});
+renderList();
 
 // Lets the page be installed on a phone's home screen. Skipped on file:// and old browsers.
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
