@@ -273,3 +273,54 @@ def test_hitting_the_daily_limit_keeps_earlier_chats_and_does_not_save_the_faile
     saved = page.evaluate("JSON.parse(localStorage.getItem('stock-guide-chats-v1'))")
     assert len(saved) == 1
     assert len(saved[0]["history"]) == 2  # only the first, finished turn
+
+
+def _axis(page: Page) -> list[str]:
+    expect(page.locator(".chart svg")).to_be_visible()
+    return page.locator(".chart .tick").all_text_contents()[:5]  # the five price labels; dates come after
+
+
+def test_chart_axis_uses_the_stocks_own_currency(chat, page):
+    chat.reply(chart_answer([{**_series("7203.T", 3300, 4), "currency": "JPY"}]))
+    ask(page, "Show Toyota in Tokyo")
+    prices = _axis(page)
+    assert all(t.startswith("¥") for t in prices), prices
+    assert not any("$" in t for t in prices)
+
+
+def test_chart_axis_for_hong_kong_dollars_is_not_mistaken_for_us_dollars(chat, page):
+    chat.reply(chart_answer([{**_series("0700.HK", 380, 0.3), "currency": "HKD"}]))
+    ask(page, "Show Tencent")
+    prices = _axis(page)
+    assert all(t.startswith("HK$") for t in prices), prices
+
+
+def test_an_index_chart_axis_is_plain_points_with_no_currency_sign(chat, page):
+    chat.reply(chart_answer([{**_series("^DJI", 50000, 20), "currency": None}]))
+    ask(page, "Show the Dow")
+    prices = _axis(page)
+    assert prices and not any(c in t for t in prices for c in "$¥£€"), prices
+    assert any("," in t for t in prices), prices  # 51,200 style, thousands separated
+
+
+def test_a_chart_saved_before_other_markets_existed_still_shows_dollars(chat, page):
+    chat.reply(chart_answer([_series("NVDA", 170, 0.5)]))  # no currency field at all
+    ask(page, "Show Nvidia")
+    assert all(t.startswith("$") for t in _axis(page))
+
+
+def test_an_unknown_currency_code_does_not_break_the_chart(chat, page):
+    chat.reply(chart_answer([{**_series("XYZ", 100, 0.5), "currency": "QQQQ"}]))
+    ask(page, "Show it")
+    expect(page.locator(".chart svg polyline.line")).to_have_count(1)
+    assert len(_axis(page)) == 5
+
+
+def test_multi_market_comparison_is_still_rebased_with_no_currency_signs(chat, page):
+    toyota = {**_series("7203.T", 3300, 4), "currency": "JPY"}
+    nvidia = {**_series("NVDA", 170, 0.5), "currency": "USD"}
+    chat.reply(chart_answer([toyota, nvidia]))
+    ask(page, "Compare Toyota and Nvidia")
+    prices = _axis(page)
+    assert not any(c in t for t in prices for c in "$¥"), prices
+    expect(page.locator(".chart figcaption")).to_contain_text("starts at 100")

@@ -19,14 +19,16 @@ from typing import Annotated, Literal
 import yfinance as yf
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
+from .. import markets
 from ..backtest import backtest_golden_cross, backtest_rsi_oversold
 from ..data_fetcher import PriceHistory, fetch_history
 from ..indicators import compute_indicators
 
 logger = logging.getLogger(__name__)
 
-# US-style ticker: starts with a letter, then letters/digits/dot/dash (BRK.B, BF-B).
-SYMBOL_PATTERN = r"^[A-Z][A-Z0-9.\-]{0,9}$"
+# Yahoo Finance ticker: an optional leading ^ for an index (^DJI), then letters, digits, dot and dash.
+# Covers NVDA, BRK-B, 7203.T (Tokyo), 0700.HK, 600519.SS, RELIANCE.NS, BAJAJ-AUTO.NS and so on.
+SYMBOL_PATTERN = r"^\^?[A-Z0-9][A-Z0-9.\-]{0,15}$"
 
 _CACHE_TTL_SECONDS = 15 * 60
 _LOOKBACK_YEARS = 2
@@ -51,6 +53,34 @@ def _get_history(symbol: str) -> PriceHistory:
     with _cache_lock:
         _cache[symbol] = (now, history)
     return history
+
+
+def _need_history(history: PriceHistory, rows: int, what: str) -> None:
+    """Refuse, in plain words, when the data source has too few past prices for the maths.
+
+    Seen with some Indian BSE tickers (RELIANCE.BO has 3 days of data on Yahoo while TCS.BO has two
+    years), and it applies to any recent listing. Left alone, the indicator code fails with an index error.
+    """
+    have = len(history.df)
+    if have < rows:
+        raise ValueError(
+            f"{history.symbol} has only {have} trading days of price history available, "
+            f"which is too few for {what}. The data source may be missing most of its past prices."
+        )
+
+
+def _market_fields(history: PriceHistory) -> dict:
+    """Where the stock trades and what its prices are in, so Claude never has to guess."""
+    market = markets.lookup(history.symbol)
+    if market.is_index:
+        return {
+            "market": market.name,
+            "currency": None,
+            "kind": "index",
+            "index_name": market.index_name,
+            "note": "An index level is in points, not money.",
+        }
+    return {"market": market.name, "currency": history.currency or market.currency}
 
 
 def clear_cache() -> None:
@@ -110,24 +140,29 @@ def find_company(inp: FindCompanyInput) -> dict:
             "symbol": q.get("symbol"),
             "name": q.get("longname") or q.get("shortname"),
             "exchange": q.get("exchDisp") or q.get("exchange"),
+            "market": markets.lookup(q["symbol"]).name,
             "type": q.get("quoteType"),
         }
         for q in quotes
-        if q.get("quoteType") in {"EQUITY", "ETF"} and q.get("symbol")
+        if q.get("quoteType") in {"EQUITY", "ETF", "INDEX"} and q.get("symbol")
     ]
     return {"query": inp.query, "matches": matches[:5]}
 
 
 def get_stock_snapshot(inp: SymbolInput) -> dict:
     history = _get_history(inp.symbol)
-    return compute_indicators(inp.symbol, history.df).to_dict()
+    _need_history(history, _SNAPSHOT_MIN_DAYS, "a snapshot")
+    return {**compute_indicators(inp.symbol, history.df).to_dict(), **_market_fields(history)}
 
 
+_SNAPSHOT_MIN_DAYS = 200  # the longest average in the snapshot looks back 200 trading days
+_BACKTEST_MIN_DAYS = {"dip_buying": 60, "trend_following": 250}
 _PERIOD_DAYS = {"6mo": 126, "1y": 252, "2y": 504}
 
 
 def get_price_trend(inp: PriceTrendInput) -> dict:
-    df = _get_history(inp.symbol).df.tail(_PERIOD_DAYS[inp.period])
+    history = _get_history(inp.symbol)
+    df = history.df.tail(_PERIOD_DAYS[inp.period])
     close = df["Close"]
     start, end = float(close.iloc[0]), float(close.iloc[-1])
     monthly = close.resample("ME").last()
@@ -139,8 +174,9 @@ def get_price_trend(inp: PriceTrendInput) -> dict:
         "start_price": round(start, 2),
         "end_price": round(end, 2),
         "pct_change": round((end / start - 1) * 100, 2),
-        "value_of_100_dollars": round(100 * end / start, 2),
+        "value_of_100": round(100 * end / start, 2),  # what 100 of the stock's own currency became
         "monthly_closes": [{"month": d.strftime("%Y-%m"), "close": round(float(v), 2)} for d, v in monthly.items()],
+        **_market_fields(history),
     }
 
 
@@ -155,11 +191,15 @@ def get_price_chart(inp: ChartInput) -> dict:
     """
     stocks, series = [], []
     for symbol in inp.symbols:
-        close = _get_history(symbol).df["Close"].tail(_CHART_DAYS[inp.period])
+        history = _get_history(symbol)
+        fields = _market_fields(history)
+        close = history.df["Close"].tail(_CHART_DAYS[inp.period])
         start, end = float(close.iloc[0]), float(close.iloc[-1])
         stocks.append(
             {
                 "symbol": symbol,
+                "market": fields["market"],
+                "currency": fields["currency"],
                 "start_date": close.index[0].strftime("%Y-%m-%d"),
                 "end_date": close.index[-1].strftime("%Y-%m-%d"),
                 "start_price": round(start, 2),
@@ -174,6 +214,7 @@ def get_price_chart(inp: ChartInput) -> dict:
         series.append(
             {
                 "symbol": symbol,
+                "currency": fields["currency"],  # the page uses it to label the price axis
                 "dates": [d.strftime("%Y-%m-%d") for d in close.index],
                 "closes": [round(float(v), 2) for v in close],
             }
@@ -187,26 +228,36 @@ def get_price_chart(inp: ChartInput) -> dict:
 
 
 def run_backtest(inp: BacktestInput) -> dict:
-    df = _get_history(inp.symbol).df
+    history = _get_history(inp.symbol)
+    _need_history(history, _BACKTEST_MIN_DAYS[inp.strategy], "a strategy test")
     if inp.strategy == "dip_buying":
-        result = backtest_rsi_oversold(df, inp.symbol)
+        result = backtest_rsi_oversold(history.df, inp.symbol)
     else:
-        result = backtest_golden_cross(df, inp.symbol)
-    return {**result.__dict__, "strategy": inp.strategy, "years_of_history": _LOOKBACK_YEARS}
+        result = backtest_golden_cross(history.df, inp.symbol)
+    return {
+        **result.__dict__,
+        "strategy": inp.strategy,
+        "years_of_history": _LOOKBACK_YEARS,
+        **_market_fields(history),
+    }
 
 
 # --------------------------------------------------------------------------
 # Tool definitions sent to Claude
 # --------------------------------------------------------------------------
 
-_SYMBOL_PROP = {"type": "string", "description": "US stock ticker in capitals, e.g. NVDA"}
+_SYMBOL_PROP = {
+    "type": "string",
+    "description": "Yahoo Finance ticker in capitals, with the exchange ending outside the US, e.g. NVDA, 7203.T, ^DJI",
+}
 
 TOOLS: list[dict] = [
     {
         "name": "find_company",
         "description": (
-            "Look up a company's stock ticker from its name, brand or a partial ticker. "
-            "Use this whenever the user names a company rather than giving an exact ticker."
+            "Look up a stock or market index ticker from its name, brand or a partial ticker. Each match says "
+            "which market it trades in. Use this whenever the user names a company rather than giving an "
+            "exact ticker, and when the same name could be listed in more than one place."
         ),
         "input_schema": {
             "type": "object",
@@ -218,7 +269,7 @@ TOOLS: list[dict] = [
     {
         "name": "get_stock_snapshot",
         "description": (
-            "Get where a stock stands today versus its own history: latest price, how it compares to its "
+            "Get where a stock or index stands today versus its own history: latest price, how it compares to its "
             "typical price over the last 50 and 200 trading days, recent buying pressure, how much it swings "
             "day to day, and its 52-week high and low. Use for 'how is X doing' questions."
         ),
@@ -233,7 +284,8 @@ TOOLS: list[dict] = [
         "name": "get_price_trend",
         "description": (
             "Get a stock's price path over a period as monthly closing prices, the total percentage change, "
-            "and what $100 invested at the start would be worth now. Use for 'how has X done this year' "
+            "and what 100 (of the stock's own currency) invested at the start would be worth now. Use for "
+            "'how has X done this year' "
             "or 'what if I had invested' questions."
         ),
         "input_schema": {
@@ -262,7 +314,7 @@ TOOLS: list[dict] = [
                     "items": _SYMBOL_PROP,
                     "minItems": 1,
                     "maxItems": MAX_CHART_SYMBOLS,
-                    "description": "US stock tickers in capitals, e.g. ['AAPL', 'MSFT']",
+                    "description": "Yahoo Finance tickers in capitals, e.g. ['AAPL', 'MSFT'] or ['^DJI', '^N225']",
                 },
                 "period": {"type": "string", "enum": ["3mo", "6mo", "1y"], "description": "Look-back period"},
             },

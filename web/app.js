@@ -205,6 +205,20 @@ function signedPct(n) {
   return `${n >= 0 ? "+" : "-"}${Math.abs(n).toFixed(1)}%`;
 }
 
+// A price in the stock's own currency ("$178", "¥3,407", "HK$379"). The default symbol style is used on
+// purpose: the "narrow" one prints Hong Kong, Australian and Singapore dollars as a bare "$". An index has no currency, so it is
+// plain points. A missing currency means a chart saved before other markets existed: those were all US dollars.
+function formatPrice(value, currency, digits) {
+  const cur = currency === undefined ? "USD" : currency;
+  const opts = { minimumFractionDigits: digits, maximumFractionDigits: digits };
+  try {
+    if (!cur) return value.toLocaleString("en-US", opts);
+    return value.toLocaleString("en-US", { ...opts, style: "currency", currency: cur });
+  } catch (_) {
+    return value.toFixed(digits); // a currency code this browser does not know
+  }
+}
+
 // A line chart drawn from the daily closes the server sent. One stock shows dollars;
 // several are rebased to 100 at the start so their percentage moves can be compared.
 // Built with DOM calls and textContent only, so nothing from the data can inject HTML.
@@ -232,7 +246,7 @@ function renderChart(chart) {
   vMax += pad;
   const x = (t) => m.l + ((t - tMin) / (tMax - tMin || 1)) * (W - m.l - m.r);
   const y = (v) => m.t + (1 - (v - vMin) / (vMax - vMin)) * (H - m.t - m.b);
-  const fmtY = (v) => (multi ? v.toFixed(0) : `$${v.toFixed(vMax - vMin < 20 ? 2 : 0)}`);
+  const fmtY = (v) => (multi ? v.toFixed(0) : formatPrice(v, raw[0].currency, vMax - vMin < 20 ? 2 : 0));
 
   const firstISO = new Date(tMin).toISOString().slice(0, 10);
   const lastISO = new Date(tMax).toISOString().slice(0, 10);

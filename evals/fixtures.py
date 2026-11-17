@@ -133,7 +133,7 @@ def _trend(symbol: str, period: str) -> dict:
         "start_price": start,
         "end_price": end,
         "pct_change": _pct(end, start),
-        "value_of_100_dollars": round(100 * end / start, 2),
+        "value_of_100": round(100 * end / start, 2),
         "monthly_closes": [{"month": m, "close": c} for m, c in zip(labels, closes, strict=True)],
     }
 

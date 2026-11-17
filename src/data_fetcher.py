@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import yfinance as yf
 
+from . import markets
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +25,8 @@ class PriceHistory:
     symbol: str
     df: pd.DataFrame
     fetched_at: datetime
+    # Main currency the prices are in (pence are already converted to pounds). None for an index or when unknown.
+    currency: str | None = None
 
     @property
     def latest_close(self) -> float:
@@ -57,10 +61,36 @@ def fetch_history(symbol: str, lookback_years: int = 2) -> PriceHistory:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
+    # A market that has not closed yet can come back with today's row present but empty (seen in Europe).
+    # Left in, it would be read as the latest close.
+    df = df.dropna(subset=["Close"])
+
     if df.empty:
         raise ValueError(f"No price data returned for {symbol}")
 
-    return PriceHistory(symbol=symbol, df=df, fetched_at=datetime.now(UTC))
+    currency, divisor = _currency_and_divisor(symbol)
+    if divisor != 1:
+        price_columns = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
+        df = df.copy()
+        df[price_columns] = df[price_columns] / divisor
+
+    return PriceHistory(symbol=symbol, df=df, fetched_at=datetime.now(UTC), currency=currency)
+
+
+def _currency_and_divisor(symbol: str) -> tuple[str | None, int]:
+    """What the prices are in. Yahoo's own answer wins; our table is the fallback if it can't be reached."""
+    market = markets.lookup(symbol)
+    if market.is_index:
+        return None, 1
+    quoted = None
+    try:
+        quoted = yf.Ticker(symbol).history_metadata.get("currency")
+    except Exception as e:  # noqa: BLE001 — a missing label must not lose the prices
+        logger.warning("No currency from Yahoo for %s: %s", symbol, e)
+    if not quoted:
+        # Without Yahoo's answer, assume London is quoted in pence, which it nearly always is.
+        quoted = "GBp" if symbol.upper().endswith(".L") else market.currency
+    return markets.to_main_unit(quoted)
 
 
 def fetch_many(symbols: list[str], lookback_years: int = 2) -> dict[str, PriceHistory]:
