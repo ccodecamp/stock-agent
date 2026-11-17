@@ -41,11 +41,18 @@
     - never_calls: [get_stock_snapshot, get_price_trend, run_backtest]
     - no_numbers
 
-- id: non_us_listing
-  category: edge
+# ---- other markets ----
+# The fixtures serve data for these (evals/fixtures.py), so each case checks the answer's content.
+
+- id: toyota_tokyo_yen
+  category: normal
   question: "How is Toyota's Tokyo listing 7203.T doing?"
   checks:
-    - no_numbers
+    - calls_tool: get_stock_snapshot
+    - tool_input: {tool: get_stock_snapshot, field: symbol, value: 7203.T}
+    - currency_named  # yen, never dollars
+    - no_currency_conversion
+    - names_date
 
 - id: asks_for_advice
   category: adversarial
@@ -79,3 +86,99 @@
     - calls_tool: get_price_chart
     - tool_input: {tool: get_price_chart, field: period, value: 1y}
     - covers_symbols: [AAPL, MSFT]
+
+- id: dow_in_points
+  category: normal
+  question: "How's the Dow Jones doing?"
+  checks:
+    - calls_tool: get_stock_snapshot
+    - tool_input: {tool: get_stock_snapshot, field: symbol, value: "^DJI"}
+    - index_in_points  # an index level is points, never dollars
+    - no_currency_conversion
+    - names_date
+
+- id: shell_100_pounds
+  category: normal
+  question: "If I'd put 100 pounds into Shell a year ago, what would I have now?"
+  checks:
+    - tool_input: {tool: get_price_trend, field: symbol, value: SHEL.L}
+    - tool_input: {tool: get_price_trend, field: period, value: 1y}
+    - currency_named  # pounds: the real tool has already turned London's pence into pounds
+    - no_currency_conversion
+
+- id: tencent_vs_nvidia
+  category: edge
+  question: "Compare Tencent and Nvidia over the last 6 months"
+  checks:
+    - calls_tool: get_price_chart
+    - covers_symbols: [0700.HK, NVDA]
+    - currency_named  # Hong Kong dollars for one, US dollars for the other
+    - no_currency_conversion
+    - names_all_dates  # Hong Kong is a day ahead of New York in the data
+
+- id: toyota_which_listing
+  category: edge
+  question: "How is Toyota doing?"
+  checks:
+    # No calls_tool check: fetching TM or 7203.T directly is fine, so long as the answer says which it used.
+    - names_listing: [TM, 7203.T]  # two listings: say which one was used
+    - currency_named
+    - no_currency_conversion
+
+- id: sap_euros
+  category: normal
+  question: "How is SAP doing in Germany?"
+  checks:
+    - covers_symbols: [SAP.DE]
+    - currency_named
+    - names_date
+
+- id: dbs_singapore
+  category: normal
+  question: "How is DBS doing in Singapore?"
+  checks:
+    - covers_symbols: [D05.SI]
+    - currency_named
+    - names_date
+
+- id: ptt_thailand_six_months
+  category: normal
+  question: "How has PTT in Thailand done over the last 6 months?"
+  checks:
+    - tool_input: {tool: get_price_trend, field: symbol, value: PTT.BK}
+    - tool_input: {tool: get_price_trend, field: period, value: 6mo}
+    - currency_named
+    - no_currency_conversion
+
+- id: reliance_nse
+  category: normal
+  question: "How is Reliance doing on the NSE?"
+  checks:
+    - covers_symbols: [RELIANCE.NS]
+    - currency_named  # rupees
+    - names_date
+
+- id: shopify_in_toronto
+  category: edge
+  question: "How is Shopify doing in Toronto?"
+  checks:
+    - never_fetches: [SHOP.TO]  # Toronto is not covered, though the data tool would answer
+    - declines_market: {place: Toronto, offers: [US, U.S., Nasdaq, SHOP, American]}
+    - currency_named
+
+- id: yen_to_dollars
+  category: adversarial
+  question: "Toyota trades in Tokyo at 3,414 yen. What is that in US dollars?"
+  checks:
+    - no_currency_conversion  # there is no exchange rate in any tool, so none may be invented
+
+- id: index_chart_two_markets
+  category: normal
+  question: "Chart the Dow and the Nikkei over the last 6 months"
+  checks:
+    - calls_tool: get_price_chart
+    - tool_input: {tool: get_price_chart, field: period, value: 6mo}
+    - covers_symbols: ["^DJI", "^N225"]
+    - index_in_points
+    - no_currency_conversion
+    - names_all_dates
