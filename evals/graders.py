@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
+from src import markets
+
 from .fixtures import ToolCallRecord
 
 # Keep in sync with the "Banned words" list in src/api/chat.py (a test enforces this).
@@ -89,15 +91,84 @@ def plain_text(run: Run, arg=None) -> Result:
     return _fail(f"{words} words (max {MAX_WORDS})") if words > MAX_WORDS else _ok()
 
 
-# ---- grounding ----
+# ---- money amounts: which number, in which currency ----
 
-_DOLLARS = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+_NUM = r"\d[\d,]*(?:\.\d+)?"
+
+# Signs that sit in front of a number. Longest first, so "HK$" is never read as a bare "$".
+_PREFIX_CURRENCIES = {
+    "HK$": "HKD", "AU$": "AUD", "A$": "AUD", "SG$": "SGD", "S$": "SGD", "US$": "USD", "CN¥": "CNY", "JP¥": "JPY",
+    "$": "USD", "¥": "¥", "£": "GBP", "€": "EUR", "₹": "INR", "฿": "THB", "Rp.": "IDR", "Rp": "IDR", "RM": "MYR",
+}  # fmt: skip
+# A bare "¥" is the yen sign and also the yuan sign, so it stands for either.
+_YEN_OR_YUAN = {"JPY", "CNY"}
+
+# Words that follow a number, or name a currency on their own. Longest first for the same reason.
+_WORD_CURRENCIES = [
+    ("HKD", r"Hong Kong dollars?|HK dollars?|HKD"),
+    ("AUD", r"Australian dollars?|AUD"),
+    ("SGD", r"Singapore dollars?|SGD"),
+    ("USD", r"U\.?S\.? dollars?|USD|dollars?"),
+    ("JPY", r"Japanese yen|yen|JPY"),
+    ("GBP", r"pounds? sterling|pounds?|GBP"),
+    ("EUR", r"euros?|EUR"),
+    ("INR", r"Indian rupees?|rupees?|INR"),
+    ("THB", r"baht|THB"),
+    ("IDR", r"rupiah|IDR"),
+    ("MYR", r"ringgit|MYR"),
+    ("CNY", r"yuan|renminbi|RMB|CNY"),
+]
+_WORD_ALTERNATION = "|".join(f"(?P<{code}>{pattern})" for code, pattern in _WORD_CURRENCIES)
+_SIGN_ALTERNATION = "|".join(re.escape(s) for s in sorted(_PREFIX_CURRENCIES, key=len, reverse=True))
+
+_PREFIXED = re.compile(rf"(?<![A-Za-z])({_SIGN_ALTERNATION})\s?({_NUM})")
+_SUFFIXED = re.compile(rf"(?<![\d.,])({_NUM})\s*-?\s*(?:{_WORD_ALTERNATION})\b", re.IGNORECASE)
+_CURRENCY_MENTION = re.compile(
+    rf"(?-i:(?<![A-Za-z])(?P<sign>{_SIGN_ALTERNATION})(?=\s?\d))|\b(?:{_WORD_ALTERNATION})\b",  # signs keep their case
+    re.IGNORECASE,
+)
 _PERCENTS = re.compile(r"(\d+(?:\.\d+)?)\s?%")
+_POINTS = re.compile(rf"(?<![\d.,])({_NUM})\s*(?:index )?points?\b", re.IGNORECASE)
+
+
+def _to_float(number: str) -> float:
+    return float(number.replace(",", ""))
+
+
+def _amounts(text: str) -> list[tuple[float, str]]:
+    """Every money amount in the text with its currency: '$100', 'HK$379', '3,414 yen', '100 pounds'.
+    A bare yen sign comes back as '¥', which stands for yen or yuan."""
+    found = [(_to_float(n), _PREFIX_CURRENCIES[sign]) for sign, n in _PREFIXED.findall(text)]
+    for m in _SUFFIXED.finditer(text):
+        found.append((_to_float(m.group(1)), m.lastgroup))
+    return found
+
+
+def _currencies_named(text: str) -> set[str]:
+    """Every currency the text names, with or without an amount: 'in yen', 'HK$', 'pounds'."""
+    named: set[str] = set()
+    for m in _CURRENCY_MENTION.finditer(text):
+        named.add(_PREFIX_CURRENCIES[m.group("sign")] if m.group("sign") else m.lastgroup)
+    return named
+
+
+def _covers(code: str, currencies: set[str]) -> bool:
+    """Is an amount in `code` one of `currencies`? A bare '¥' counts for yen or yuan."""
+    return bool(_YEN_OR_YUAN & currencies) if code == "¥" else code in currencies
+
+
+def _named_in(code: str, named: set[str]) -> bool:
+    """Does the text name this currency? The yen sign names yen or yuan."""
+    return code in named or (code in _YEN_OR_YUAN and "¥" in named)
+
+
+# ---- grounding ----
 
 
 def _quoted_numbers(text: str) -> list[float]:
-    found = _DOLLARS.findall(text) + _PERCENTS.findall(text)
-    return [float(s.replace(",", "")) for s in found]
+    """The figures a data claim rests on: money in any currency, percentages and index points."""
+    amounts = [value for value, _ in _amounts(text)]
+    return amounts + [_to_float(n) for n in _PERCENTS.findall(text)] + [_to_float(n) for n in _POINTS.findall(text)]
 
 
 def _numbers_in(value, key: str = "") -> list[float]:
@@ -158,12 +229,14 @@ def _derived_numbers(output: dict) -> list[float]:
 
 def _matches(quoted: float, source: float) -> bool:
     # A whole number may be a rounded value ("about 5%" for 4.7); a decimal must match closely.
+    # The tiny extra covers float error at the half-way point (17.6 is a fair rounding of 17.55).
     tolerance = 0.5 if quoted == int(quoted) else 0.05
-    return abs(quoted - source) <= tolerance
+    return abs(quoted - source) <= tolerance + 1e-9
 
 
 def numbers_grounded(run: Run, arg=None) -> Result:
-    """Every $ amount and % in the answer must come from a tool result (or the user's question)."""
+    """Every money amount (any currency), % and index level in the answer must come from a tool result
+    (or the user's question)."""
     # Round stakes ($100 is the tools' own baseline) are illustrations, not data claims.
     allowed = [*map(float, _STAKES), *_quoted_numbers(run.question)]
     for call in run.tool_calls:
@@ -212,13 +285,18 @@ def tool_input(run: Run, arg) -> Result:
     return _ok() if hit else _fail(f"no {arg['tool']} call with {arg['field']}={arg['value']!r}; saw {seen}")
 
 
-def covers_symbols(run: Run, arg) -> Result:
+def _symbols_requested(run: Run) -> set[str]:
     symbols: set = set()
     for c in run.tool_calls:
         if isinstance(c.input, dict):
             symbols.add(c.input.get("symbol"))
             if isinstance(c.input.get("symbols"), list):  # get_price_chart takes several at once
                 symbols.update(c.input["symbols"])
+    return {s for s in symbols if isinstance(s, str)}
+
+
+def covers_symbols(run: Run, arg) -> Result:
+    symbols = _symbols_requested(run)
     missing = [s for s in _as_list(arg) if s not in symbols]
     return _fail(f"no data fetched for {missing}") if missing else _ok()
 
@@ -258,11 +336,236 @@ def names_date(run: Run, arg=None) -> Result:
     return _fail(f"no mention of the data date; expected one of {sorted(d.isoformat() for d in dates)}")
 
 
+# ---- other markets: currency, index points, which listing, which dates ----
+
+# Numeric fields in a tool result that are prices in the result's currency.
+_PRICE_FIELDS = {
+    "close", "start_price", "end_price", "sma_50", "sma_200", "high_52w", "low_52w", "high_price", "low_price",
+    "atr_14",
+}  # fmt: skip
+_UNSET = object()
+
+
+def _priced_figures(run: Run) -> dict[str | None, set[float]]:
+    """currency -> the price figures the tool results gave in it. The key None holds index levels,
+    which are points and not money. Results with no currency field (an older shape) are skipped."""
+    out: dict[str | None, set[float]] = {}
+
+    def walk(value, currency) -> None:
+        if isinstance(value, dict):
+            if "currency" in value:
+                currency = value["currency"]
+            for key, item in value.items():
+                if isinstance(item, bool):
+                    continue
+                if isinstance(item, (int, float)):
+                    if key in _PRICE_FIELDS and currency is not _UNSET:
+                        out.setdefault(currency, set()).add(abs(float(item)))
+                else:
+                    walk(item, currency)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, currency)
+
+    for call in run.tool_calls:
+        if not call.is_error:
+            walk(json.loads(call.output), _UNSET)
+    return out
+
+
+_BARE_NUMBER = re.compile(rf"(?<![\d.,A-Za-z])({_NUM})(?!\d)(?!\s?%)")
+
+
+def _quotes_figure(text: str, figures: set[float]) -> bool:
+    """Does the text quote one of these figures, with or without a currency sign? A decimal must match
+    closely. A whole number may be a rounded or cut-off price, but only for figures of 100 or more
+    ('1,368' for 1368.7), so a small count such as '50 days' is not mistaken for a price."""
+    for m in _BARE_NUMBER.finditer(text):
+        token = m.group(1).rstrip(",")
+        value = _to_float(token)
+        for figure in figures:
+            if "." in token and abs(value - figure) <= 0.0051:
+                return True
+            if "." not in token and figure >= 100 and abs(value - figure) < 1:
+                return True
+    return False
+
+
+_DOLLAR_FAMILY = {"HKD", "SGD", "AUD", "CAD"}
+_EXPLICIT_US = re.compile(r"US\$|U\.S\.? dollars?|\bUS dollars?|\bUSD\b")
+
+
+def _foreign_amounts(run: Run) -> list[str]:
+    """Amounts in a currency none of the tool results used. Amounts the user wrote are their own."""
+    currencies = {c for c in _priced_figures(run) if c}
+    asked = set(_amounts(run.question))
+    if not currencies:
+        # No tool data to hold the answer to (the user supplied the price): an example amount in the
+        # currency the user themself wrote, such as "100 yen" after "3,414 yen", is not a conversion.
+        currencies = {c for _, c in asked}
+    # A bare "dollars" or "$" after the answer has already named, say, Singapore dollars is not US dollars.
+    dollar_family = _DOLLAR_FAMILY & currencies & _currencies_named(run.text)
+    if dollar_family and not _EXPLICIT_US.search(run.text):
+        currencies = currencies | {"USD"}
+    return sorted({f"{v:g} {c}" for v, c in _amounts(run.text) if (v, c) not in asked and not _covers(c, currencies)})
+
+
+def currency_named(run: Run, arg=None) -> Result:
+    """Prices are in the stock's own currency: no dollars for a yen stock, and when the answer quotes a
+    price it says what currency that price is in."""
+    foreign = _foreign_amounts(run)
+    if foreign:
+        used = sorted(c for c in _priced_figures(run) if c) or "none"
+        return _fail(f"amount in a currency the data does not use (data is in {used}): {foreign}")
+    priced, named = _priced_figures(run), _currencies_named(run.text)
+    unnamed = [
+        c for c in sorted(k for k in priced if k) if _quotes_figure(run.text, priced[c]) and not _named_in(c, named)
+    ]
+    return _fail(f"quotes a {unnamed} price without naming the currency") if unnamed else _ok()
+
+
+_CONVERSIONS = [
+    r"\b(?:exchange|conversion|currency) rate (?:of|is|was|at)\b[^.]{0,20}\d",
+    r"\bconverts? (?:to|into) (?:about |roughly |around |approximately )?\W?\d",
+    r"\bconverted (?:to|into)\b[^.]{0,30}\d",
+    r"\bequivalent to (?:about |roughly |around |approximately )?\W?\d",
+    r"\b(?:is|are|=|equals?)\s+(?:about |roughly |around |approximately )?\d[\d,.]*\s*(?:US |U\.S\. )?dollars\b",
+]
+
+
+def no_currency_conversion(run: Run, arg=None) -> Result:
+    """The tools hold no exchange rates, so the answer must not turn one currency into another."""
+    foreign = _foreign_amounts(run)
+    if foreign:
+        return _fail(f"amount in a currency no tool returned: {foreign}")
+    for pattern in _CONVERSIONS:
+        m = re.search(pattern, run.text, re.IGNORECASE)
+        if m:
+            return _fail(f"conversion-like phrase: '{m.group(0)}'")
+    return _ok()
+
+
+def index_in_points(run: Run, arg=None) -> Result:
+    """An index level is points, not money: never '$51,608', and a quoted level says 'points'."""
+    levels = _priced_figures(run).get(None, set())
+    if not levels:
+        return _ok()
+    as_money = [(v, c) for v, c in _amounts(run.text) if any(_matches(v, level) for level in levels)]
+    if as_money:
+        return _fail(f"index level written as money: {as_money}")
+    if _quotes_figure(run.text, levels) and not re.search(r"\bpoints?\b", run.text, re.IGNORECASE):
+        return _fail("quotes an index level without saying 'points'")
+    return _ok()
+
+
+# What an answer may call each market when it says which listing it used.
+_MARKET_ALIASES = {
+    "US": ["US", "U.S.", "United States", "American", "NYSE", "Nasdaq", "New York", "ADR"],
+    "Tokyo": ["Tokyo", "Japan", "Japanese", "TSE"],
+    "Hong Kong": ["Hong Kong", "HK"],
+    "Shanghai": ["Shanghai", "China", "Chinese"],
+    "Shenzhen": ["Shenzhen", "China", "Chinese"],
+    "India (NSE)": ["NSE", "India", "Indian"],
+    "India (BSE)": ["BSE", "Bombay", "India", "Indian"],
+    "Australia (ASX)": ["ASX", "Australia", "Australian"],
+    "London": ["London", "UK", "U.K.", "Britain", "British", "LSE"],
+    "Germany (Xetra)": ["Germany", "German", "Xetra", "Frankfurt"],
+    "Paris": ["Paris", "France", "French"],
+    "Milan": ["Milan", "Italy", "Italian"],
+    "Singapore": ["Singapore"],
+    "Thailand": ["Thailand", "Thai", "Bangkok"],
+    "Indonesia": ["Indonesia", "Jakarta"],
+    "Malaysia": ["Malaysia", "Kuala Lumpur"],
+}  # fmt: skip
+
+
+def _mentions(text: str, names: list[str]) -> bool:
+    """Short all-caps names (US, UK, HK) must match their case, or 'us' would match every 'tell us'."""
+    for name in names:
+        flags = 0 if (len(name) <= 3 and name.isupper()) else re.IGNORECASE
+        if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text, flags):
+            return True
+    return False
+
+
+def names_listing(run: Run, arg) -> Result:
+    """arg = tickers that are one company listed in different places, like [TM, 7203.T]. If the answer
+    uses one, it says which listing. If it fetched none, it must say there is more than one."""
+
+    def says(symbol: str) -> bool:
+        market = markets.lookup(symbol).name
+        return _mentions(run.text, _MARKET_ALIASES.get(market, [market]))
+
+    group = _as_list(arg)
+    used = [s for s in group if s in _symbols_requested(run)]
+    if used:
+        unsaid = [s for s in used if not says(s)]
+        return _fail(f"used {unsaid} without saying which listing it is") if unsaid else _ok()
+    if sum(says(s) for s in group) >= 2:
+        return _ok()
+    return _fail(f"fetched none of {group} and does not say there is more than one listing")
+
+
+def never_fetches(run: Run, arg) -> Result:
+    """No data may be requested for these tickers (a market the app does not cover)."""
+    bad = sorted(_symbols_requested(run) & set(_as_list(arg)))
+    return _fail(f"fetched data for {bad}") if bad else _ok()
+
+
+_NOT_COVERED = [
+    r"\b(?:don't|do not|can't|cannot|couldn't|won't|unable to|not able to|isn't|aren't|not)\b[^.]{0,50}"
+    r"\b(?:cover|covered|support|supported|look up|pull up|have (?:data|prices)|get (?:data|prices))\b",
+    r"\bonly (?:cover|support|handle|look up)\b",
+    r"\bnot (?:one of )?the (?:markets|exchanges)\b",
+]
+
+
+def declines_market(run: Run, arg) -> Result:
+    """arg = {place, offers: [...]}: the answer names the place, says plainly it is not covered, and
+    offers something that is covered (one of the `offers` words, like a US ticker or exchange)."""
+    if not re.search(re.escape(arg["place"]), run.text, re.IGNORECASE):
+        return _fail(f"never mentions {arg['place']}")
+    if not any(re.search(p, run.text, re.IGNORECASE) for p in _NOT_COVERED):
+        return _fail(f"does not say {arg['place']} is not covered")
+    if not _mentions(run.text, arg["offers"]):
+        return _fail(f"offers no covered alternative (looked for {arg['offers']})")
+    return _ok()
+
+
+_DATES_DIFFER = [
+    r"\bdifferent (?:days|dates|times)\b",
+    r"\bdates? (?:may |can |might |could )?(?:differ|vary)\b",
+    r"\bnot the same (?:day|date)\b",
+    r"\bclose[sd]? at different\b",
+    r"\b(?:one|a) day (?:apart|ahead|earlier|later|behind)\b",
+    r"\bdiffer(?:s|ent)? by (?:a|one) day\b",
+]
+
+
+def names_all_dates(run: Run, arg=None) -> Result:
+    """When results from different markets carry different dates, the answer names every date or says
+    plainly that the dates differ. (One date needs no such care; names_date covers it.)"""
+    dates: set[date] = set()
+    for call in run.tool_calls:
+        if not call.is_error:
+            _dates_in(json.loads(call.output), dates)
+    if len(dates) < 2:
+        return _ok()
+    if all(_date_pattern(d).search(run.text) for d in dates):
+        return _ok()
+    if any(re.search(p, run.text, re.IGNORECASE) for p in _DATES_DIFFER):
+        return _ok()
+    found = sorted(d.isoformat() for d in dates)
+    return _fail(f"results are dated {found}, but the answer names neither all of them nor that they differ")
+
+
 CHECKS: dict[str, Callable[..., Result]] = {
     f.__name__: f
     for f in (
         answered, no_banned_words, no_advice, plain_text, numbers_grounded, no_numbers,
         calls_tool, never_calls, calls_no_tools, tool_input, covers_symbols, names_date,
+        currency_named, no_currency_conversion, index_in_points, names_listing, never_fetches,
+        declines_market, names_all_dates,
     )
 }  # fmt: skip
 
