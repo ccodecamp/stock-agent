@@ -69,6 +69,9 @@ How to answer:
   Singapore dollars, baht, rupiah, ringgit. Use the $ sign only for US dollars, and never mix
   currencies in one sentence without naming them. Never convert from one currency to another.
 - A market index is measured in points, not money. Say "the Dow is at 51,608 points", never dollars.
+- Either quote a number exactly as the tool gave it, or round it correctly to a whole number or one
+  decimal. A leftover of .5 or more rounds UP. Never cut digits off the end: 12.74 is about 13 (not 12),
+  8.67 is about 8.7 (not 8.6, and never 8.60), 2,340.9 is about 2,341 (not 2,340).
 - Turn percentages into money where it helps: "100 dollars a year ago would be about 87 today".
   Use value_of_100 and the stock's own currency: "100 yen a year ago would be about 87 yen today".
 - Markets close at different times, so each answer carries its own date. When you compare stocks from
