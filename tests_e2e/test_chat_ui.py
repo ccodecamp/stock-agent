@@ -234,3 +234,42 @@ def test_hostile_symbol_text_is_not_rendered_as_html(chat, page):
     ask(page, "graph")
     expect(page.locator(".chart .legend")).to_contain_text("<img")
     assert page.evaluate("window.pwned") is None
+
+
+DAILY = '{"code": "daily_limit", "detail": "x", "resets_at": "2026-11-18T00:00:00+00:00"}'
+
+
+def test_daily_limit_says_so_plainly_and_gives_the_reset_time(chat, page):
+    chat.reply((429, DAILY))
+    ask(page, "How's Nvidia?")
+    error = page.locator(".error")
+    expect(error).to_contain_text("used up its questions for today")
+    expect(error).to_contain_text("starts again")
+    expect(error).to_contain_text("Your chats are saved")
+    expect(error).not_to_contain_text("quickly")
+
+
+def test_daily_limit_with_an_unreadable_time_still_reads_well(chat, page):
+    chat.reply((429, '{"code": "daily_limit", "resets_at": "garbage"}'))
+    ask(page, "How's Nvidia?")
+    expect(page.locator(".error")).to_have_text(
+        "Stock Guide has used up its questions for today. Try again tomorrow. Your chats are saved here."
+    )
+
+
+def test_per_minute_429_with_a_json_body_is_still_the_slow_down_message(chat, page):
+    chat.reply((429, '{"error": "Rate limit exceeded: 10 per 1 minute"}'))
+    ask(page, "How's Nvidia?")
+    expect(page.locator(".error")).to_have_text("You're sending questions quickly. Wait a minute and try again.")
+
+
+def test_hitting_the_daily_limit_keeps_earlier_chats_and_does_not_save_the_failed_turn(chat, page):
+    chat.reply(answer("Fine."))
+    ask(page, "First question")
+    expect(page.locator(".msg.assistant .body")).to_have_text("Fine.")
+    chat.reply((429, DAILY))
+    ask(page, "Second question")
+    expect(page.locator(".error")).to_contain_text("used up its questions")
+    saved = page.evaluate("JSON.parse(localStorage.getItem('stock-guide-chats-v1'))")
+    assert len(saved) == 1
+    assert len(saved[0]["history"]) == 2  # only the first, finished turn

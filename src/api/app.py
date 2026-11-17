@@ -18,6 +18,7 @@ Environment:
     CHAT_EFFORT         default medium
     ALLOWED_ORIGINS     comma-separated CORS origins, default http://localhost:3000
     CHAT_RATE_LIMIT     per-IP limit, default 10/minute
+    CHAT_DAILY_LIMIT    chats per UTC day for the whole app, default 300, 0 = no cap
 """
 
 from __future__ import annotations
@@ -25,13 +26,14 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -39,6 +41,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .chat import stream_chat
+from .limits import configured_limit, daily_limit
 
 load_dotenv()
 
@@ -101,7 +104,20 @@ def health() -> dict:
 
 @app.post("/api/chat")
 @limiter.limit(lambda: os.environ.get("CHAT_RATE_LIMIT", "10/minute"))
-def chat(request: Request, body: ChatRequest) -> StreamingResponse:
+def chat(request: Request, body: ChatRequest) -> Response:
+    # Checked after the per-minute limit and after validation, so only real requests use up the day.
+    if not daily_limit.try_take(configured_limit()):
+        resets_at = daily_limit.resets_at()
+        retry_after = max(int((resets_at - datetime.now(UTC)).total_seconds()), 1)
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+            content={
+                "code": "daily_limit",
+                "detail": "Today's question limit has been reached.",
+                "resets_at": resets_at.isoformat(),
+            },
+        )
     messages = [m.model_dump() for m in body.messages]
     return StreamingResponse(
         _sse(stream_chat(messages)),

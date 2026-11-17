@@ -44,7 +44,7 @@ uvicorn src.api.app:app --port 8000
 
 Open http://localhost:8000. One process serves both the API and the UI; there is no build step.
 
-Optional environment variables: `CHAT_MODEL` (default `claude-sonnet-5-5`), `CHAT_EFFORT`, `CHAT_RATE_LIMIT` (default `10/minute`).
+Optional environment variables: `CHAT_MODEL` (default `claude-sonnet-5-5`), `CHAT_EFFORT`, `CHAT_RATE_LIMIT` (default `10/minute`), `CHAT_DAILY_LIMIT` (default `300` chats per UTC day for the whole app, `0` turns it off).
 
 ## Tests
 

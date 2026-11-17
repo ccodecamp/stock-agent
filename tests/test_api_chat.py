@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from src.api import app as app_module
 from src.api import chat
+from src.api.limits import daily_limit
 
 
 class FakeStream:
@@ -115,6 +116,7 @@ def test_refusal_never_runs_tools_and_is_left_out_of_history(monkeypatch):
 def api(monkeypatch):
     monkeypatch.setattr(app_module, "stream_chat", lambda messages: iter([{"type": "text", "text": "hi"}]))
     app_module.limiter.reset()
+    daily_limit.reset()
     return TestClient(app_module.app)
 
 

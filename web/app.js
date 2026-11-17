@@ -322,8 +322,23 @@ async function* readSSE(response) {
   }
 }
 
+// The daily cap is shared by everyone, so say that, and say when it comes back in the reader's own time.
+function dailyLimitMessage(resetsAt) {
+  const when = new Date(resetsAt);
+  const base = "Stock Guide has used up its questions for today.";
+  if (Number.isNaN(when.getTime())) return `${base} Try again tomorrow. Your chats are saved here.`;
+  const time = when.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  return `${base} It starts again ${time} your time. Your chats are saved here, so you can pick up then.`;
+}
+
 async function errorFromResponse(res) {
-  if (res.status === 429) return "You're sending questions quickly. Wait a minute and try again.";
+  if (res.status === 429) {
+    try {
+      const data = await res.json();
+      if (data.code === "daily_limit") return dailyLimitMessage(data.resets_at);
+    } catch (_) { /* not our JSON: it is the per-minute limit */ }
+    return "You're sending questions quickly. Wait a minute and try again.";
+  }
   if (res.status === 422) {
     try {
       const detail = (await res.json()).detail;
