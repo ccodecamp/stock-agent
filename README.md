@@ -1,6 +1,6 @@
 # Stock Guide
 
-A plain-English chat agent for US stocks. Ask "How's Nvidia doing?" and Claude decides which
+A plain-English chat agent for stocks and market indexes in the US, Japan, Hong Kong, China, India, Australia, the UK, Germany, France, Italy and South-East Asia. Ask "How's Nvidia doing?" and Claude decides which
 tools to call (company lookup, price snapshot, price trend, charts, strategy test), then explains the
 numbers the way you would to a friend who has never invested. No jargon, no predictions, no advice.
 

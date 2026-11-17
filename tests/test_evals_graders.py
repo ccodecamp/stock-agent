@@ -68,7 +68,7 @@ def test_plain_text_rejects_markdown_and_long_answers():
 
 
 def test_grounding_passes_for_quoted_and_rounded_values():
-    calls = [_call("get_price_trend", {}, {"end_price": 178.67, "value_of_100_dollars": 95.1, "pct_change": -4.9})]
+    calls = [_call("get_price_trend", {}, {"end_price": 178.67, "value_of_100": 95.1, "pct_change": -4.9})]
     assert graders.numbers_grounded(_run("It's at $178.67, so $100 became about $95, down about 5%.", calls)).passed
 
 
@@ -183,7 +183,7 @@ def test_fixture_tools_error_for_unknown_symbol_and_find_company_misses():
 
 def test_fixture_trend_math_is_self_consistent():
     data = json.loads(FixtureTools()("get_price_trend", {"symbol": "AAPL", "period": "6mo"})[0])
-    assert data["value_of_100_dollars"] == round(100 * data["end_price"] / data["start_price"], 2)
+    assert data["value_of_100"] == round(100 * data["end_price"] / data["start_price"], 2)
     assert len(data["monthly_closes"]) == 6
 
 

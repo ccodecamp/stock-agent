@@ -43,8 +43,8 @@ def test_snapshot_returns_indicators():
 def test_price_trend_math_is_consistent():
     out, err = _run("get_price_trend", {"symbol": "NVDA", "period": "1y"})
     assert not err
-    assert out["value_of_100_dollars"] == pytest.approx(100 * out["end_price"] / out["start_price"], abs=0.05)
-    assert out["pct_change"] == pytest.approx(out["value_of_100_dollars"] - 100, abs=0.05)
+    assert out["value_of_100"] == pytest.approx(100 * out["end_price"] / out["start_price"], abs=0.05)
+    assert out["pct_change"] == pytest.approx(out["value_of_100"] - 100, abs=0.05)
     assert 11 <= len(out["monthly_closes"]) <= 14
 
 
@@ -143,3 +143,124 @@ def test_find_company_filters_to_stocks(monkeypatch):
 
 def test_tool_schemas_match_handlers():
     assert {t["name"] for t in tools.TOOLS} == set(tools._HANDLERS)
+
+
+# ---- other markets ----
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["NVDA", "BRK-B", "BRK.B", "7203.T", "0700.HK", "600519.SS", "000001.SZ", "RELIANCE.NS", "BAJAJ-AUTO.NS",
+     "SHEL.L", "SAP.DE", "D05.SI", "1155.KL", "^DJI", "^N225", "^SET.BK", "FTSEMIB.MI"],
+)
+def test_tickers_from_every_market_are_accepted(symbol):
+    out, err = _run("get_stock_snapshot", {"symbol": symbol})
+    assert not err, out
+    assert out["symbol"] == symbol
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["", "^", "^^DJI", "D^JI", "nvda", "7203.t", "AAPL;DROP", "AA PL", "../etc", "A" * 18, ".T", "-X", "$AAPL"],
+)
+def test_malformed_tickers_are_still_rejected(symbol):
+    out, err = _run("get_stock_snapshot", {"symbol": symbol})
+    assert err
+    assert out["error"] == "Invalid input"
+
+
+def test_every_result_says_which_market_and_currency(fake_prices):
+    snap, _ = _run("get_stock_snapshot", {"symbol": "7203.T"})
+    assert (snap["market"], snap["currency"]) == ("Tokyo", "JPY")
+    trend, _ = _run("get_price_trend", {"symbol": "0700.HK"})
+    assert (trend["market"], trend["currency"]) == ("Hong Kong", "HKD")
+    test_, _ = _run("run_backtest", {"symbol": "RELIANCE.NS", "strategy": "dip_buying"})
+    assert (test_["market"], test_["currency"]) == ("India (NSE)", "INR")
+    us, _ = _run("get_stock_snapshot", {"symbol": "NVDA"})
+    assert (us["market"], us["currency"]) == ("US", "USD")
+
+
+def test_the_currency_yahoo_reported_wins_over_the_table(monkeypatch):
+    def fake_fetch(symbol, lookback_years=2):
+        return PriceHistory(symbol=symbol, df=_synthetic_df(n=520), fetched_at=datetime.now(UTC), currency="USD")
+
+    monkeypatch.setattr(tools, "fetch_history", fake_fetch)
+    tools.clear_cache()
+    out, _ = _run("get_stock_snapshot", {"symbol": "SHEL.L"})  # a London listing quoted in dollars
+    assert out["currency"] == "USD"
+
+
+def test_an_index_is_described_as_points_not_money():
+    snap, err = _run("get_stock_snapshot", {"symbol": "^DJI"})
+    assert not err
+    assert snap["kind"] == "index"
+    assert snap["currency"] is None
+    assert snap["index_name"] == "Dow Jones Industrial Average"
+    assert "points" in snap["note"]
+    trend, _ = _run("get_price_trend", {"symbol": "^N225"})
+    assert trend["currency"] is None and trend["market"] == "Tokyo"
+    assert "kind" not in _run("get_stock_snapshot", {"symbol": "NVDA"})[0]
+
+
+def test_chart_results_carry_currency_for_the_axis_and_the_summary():
+    out, err = _run("get_price_chart", {"symbols": ["7203.T", "^DJI", "NVDA"], "period": "3mo"})
+    assert not err
+    assert [s["currency"] for s in out["chart"]["series"]] == ["JPY", None, "USD"]
+    assert [s["currency"] for s in out["stocks"]] == ["JPY", None, "USD"]
+    assert [s["market"] for s in out["stocks"]] == ["Tokyo", "US", "US"]
+
+
+def test_the_dollar_key_is_gone_so_a_yen_answer_cannot_say_dollars():
+    out, _ = _run("get_price_trend", {"symbol": "7203.T"})
+    assert "value_of_100" in out
+    assert not any("dollar" in key for key in out)
+
+
+def test_find_company_returns_the_market_and_includes_indexes(monkeypatch):
+    class FakeSearch:
+        def __init__(self, query, max_results):
+            self.quotes = [
+                {"symbol": "TM", "longname": "Toyota Motor Corporation", "exchDisp": "NYSE", "quoteType": "EQUITY"},
+                {"symbol": "7203.T", "longname": "Toyota Motor", "exchDisp": "Tokyo", "quoteType": "EQUITY"},
+                {"symbol": "^DJI", "shortname": "Dow Jones", "exchDisp": "DJI", "quoteType": "INDEX"},
+                {"symbol": "TM250117C", "quoteType": "OPTION"},
+            ]
+
+    monkeypatch.setattr(tools.yf, "Search", FakeSearch)
+    out, err = _run("find_company", {"query": "Toyota"})
+    assert not err
+    assert [(m["symbol"], m["market"]) for m in out["matches"]] == [("TM", "US"), ("7203.T", "Tokyo"), ("^DJI", "US")]
+
+
+# ---- too little history (some BSE tickers, new listings) ----
+
+
+@pytest.fixture
+def short_history(monkeypatch):
+    def fake_fetch(symbol, lookback_years=2):
+        n = {"TINY.BO": 3, "RECENT": 100}[symbol]
+        return PriceHistory(symbol=symbol, df=_synthetic_df(n=n), fetched_at=datetime.now(UTC))
+
+    tools.clear_cache()
+    monkeypatch.setattr(tools, "fetch_history", fake_fetch)
+
+
+def test_a_snapshot_with_too_little_history_is_a_plain_error_not_a_crash(short_history):
+    out, err = _run("get_stock_snapshot", {"symbol": "TINY.BO"})
+    assert err
+    assert "only 3 trading days" in out["error"]
+    assert "TINY.BO" in out["error"]
+
+
+def test_trend_following_needs_more_history_than_dip_buying(short_history):
+    out, err = _run("run_backtest", {"symbol": "RECENT", "strategy": "trend_following"})
+    assert err and "only 100 trading days" in out["error"]
+    out, err = _run("run_backtest", {"symbol": "RECENT", "strategy": "dip_buying"})
+    assert not err, out
+
+
+def test_a_trend_and_a_chart_still_work_on_a_short_history(short_history):
+    trend, err = _run("get_price_trend", {"symbol": "TINY.BO"})
+    assert not err and trend["start_date"] <= trend["end_date"]
+    chart, err = _run("get_price_chart", {"symbols": ["TINY.BO"]})
+    assert not err and len(chart["chart"]["series"][0]["dates"]) == 3
