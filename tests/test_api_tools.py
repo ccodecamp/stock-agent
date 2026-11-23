@@ -122,11 +122,6 @@ def test_unknown_ticker_is_an_error_result():
     assert "NOPE" in out["error"]
 
 
-def test_unknown_tool():
-    out, err = _run("delete_everything", {})
-    assert err
-
-
 def test_find_company_filters_to_stocks(monkeypatch):
     class FakeSearch:
         def __init__(self, query, max_results):
@@ -143,6 +138,12 @@ def test_find_company_filters_to_stocks(monkeypatch):
 
 def test_tool_schemas_match_handlers():
     assert {t["name"] for t in tools.TOOLS} == set(tools._HANDLERS)
+
+
+def test_unknown_tool_returns_error():
+    result, is_error = _run("does_not_exist", {})
+    assert is_error is True
+    assert "Unknown tool" in result["error"]
 
 
 # ---- other markets ----
