@@ -4,7 +4,7 @@
     python -m evals.run_evals --case off_topic --runs 1
 
 This calls the Anthropic API and costs real money (one chat turn per case per run).
-Output is a pass-rate table plus the first failure detail per check. Full results are
+Output includes pass rates by category and check, plus failure details. Full results are
 written to evals/results/latest.json (git-ignored).
 """
 
@@ -63,6 +63,27 @@ def grade(case: dict, run: Run) -> dict[str, dict]:
     return out
 
 
+def summarize_checks(records: list[dict]) -> dict[str, tuple[int, int]]:
+    """Count passed and total grades for each check across recorded runs."""
+    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for record in records:
+        for name, grade in record["graded"].items():
+            counts[name][0] += bool(grade["passed"])
+            counts[name][1] += 1
+    return {name: (passed, total) for name, (passed, total) in counts.items()}
+
+
+def format_check_summary(records: list[dict]) -> str:
+    """Display check pass rates, with the weakest checks first."""
+    counts = summarize_checks(records)
+    lines = ["By check (individual grades):"]
+    for name, (passed, total) in sorted(
+        counts.items(), key=lambda item: (item[1][0] / item[1][1], item[0])
+    ):
+        lines.append(f"  {name:<24} {passed}/{total}  ({100 * passed / total:.0f}%)")
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", type=int, default=3, help="runs per case (the model varies run to run)")
@@ -115,6 +136,8 @@ def main() -> None:
     total_ok = sum(v[0] for v in by_category.values())
     total = sum(v[1] for v in by_category.values())
     print(f"  {'overall':<12} {total_ok}/{total}  ({100 * total_ok / total:.0f}%)")
+
+    print(f"\n{format_check_summary(records)}")
 
     runs_total = len(cases) * args.runs
     print(
