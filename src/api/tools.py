@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable
 from typing import Annotated, Literal
 
+import pandas as pd
 import yfinance as yf
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
@@ -183,6 +184,18 @@ def get_price_trend(inp: PriceTrendInput) -> dict:
 _CHART_DAYS = {"3mo": 63, "6mo": 126, "1y": 252}
 
 
+def _candle_prices(window: pd.DataFrame) -> dict:
+    """Open, high and low for each day, so the page can draw candles.
+
+    Returns nothing if any of them is missing (some indexes have gaps), and the page then
+    shows the line chart only.
+    """
+    columns = ("Open", "High", "Low")
+    if not set(columns) <= set(window.columns) or window[list(columns)].isna().any().any():
+        return {}
+    return {name.lower() + "s": [round(float(v), 2) for v in window[name]] for name in columns}
+
+
 def get_price_chart(inp: ChartInput) -> dict:
     """Daily closes for the page to draw, plus a short summary for Claude.
 
@@ -193,7 +206,8 @@ def get_price_chart(inp: ChartInput) -> dict:
     for symbol in inp.symbols:
         history = _get_history(symbol)
         fields = _market_fields(history)
-        close = history.df["Close"].tail(_CHART_DAYS[inp.period])
+        window = history.df.tail(_CHART_DAYS[inp.period])
+        close = window["Close"]
         start, end = float(close.iloc[0]), float(close.iloc[-1])
         stocks.append(
             {
@@ -217,6 +231,8 @@ def get_price_chart(inp: ChartInput) -> dict:
                 "currency": fields["currency"],  # the page uses it to label the price axis
                 "dates": [d.strftime("%Y-%m-%d") for d in close.index],
                 "closes": [round(float(v), 2) for v in close],
+                # Candles are only drawn for a single stock, so only then do we send the extra prices.
+                **(_candle_prices(window) if len(inp.symbols) == 1 else {}),
             }
         )
     return {

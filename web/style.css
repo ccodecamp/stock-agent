@@ -243,6 +243,18 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 .chart .swatch.s4 { background: var(--c4); }
 .chart .swatch.s5 { background: var(--c5); }
 .chart figcaption { margin-top: 4px; font-size: 0.8rem; color: var(--muted); }
+
+/* Candles: hollow green = closed higher, solid orange = closed lower, so colour is not the only clue. */
+.chart .wick { stroke-width: 1.2; }
+.chart .wick.up { stroke: var(--c1); }
+.chart .wick.down { stroke: var(--c2); }
+.chart .candle { stroke-width: 1.4; }
+.chart .candle.up { stroke: var(--c1); fill: var(--surface); }
+.chart .candle.down { stroke: var(--c2); fill: var(--c2); }
+.chart-toggle { display: inline-flex; margin: 0 0 6px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.chart-toggle button { border: 0; background: transparent; color: var(--muted); padding: 4px 12px; font-size: 0.82rem; }
+.chart-toggle button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.chart-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .msg.assistant:has(.chart) { width: 88%; }
 @media (max-width: 520px) { .msg.assistant:has(.chart) { width: 100%; max-width: 100%; } }
 
