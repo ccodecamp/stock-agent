@@ -75,6 +75,37 @@ def test_price_chart_drops_repeated_symbols_and_fetches_once(fake_prices):
     assert fake_prices == ["NVDA"]
 
 
+def test_single_stock_chart_also_carries_open_high_low_for_candles():
+    out, err = _run("get_price_chart", {"symbols": ["NVDA"], "period": "3mo"})
+    assert not err
+    series = out["chart"]["series"][0]
+    expected = _synthetic_df(n=520).tail(63)
+    assert series["opens"] == [round(float(v), 2) for v in expected["Open"]]
+    assert series["highs"] == [round(float(v), 2) for v in expected["High"]]
+    assert series["lows"] == [round(float(v), 2) for v in expected["Low"]]
+    assert len(series["opens"]) == len(series["closes"])
+
+
+def test_multi_stock_chart_stays_a_plain_line_chart():
+    out, err = _run("get_price_chart", {"symbols": ["NVDA", "AAPL"], "period": "3mo"})
+    assert not err
+    for series in out["chart"]["series"]:
+        assert not {"opens", "highs", "lows"} & series.keys()
+
+
+def test_chart_without_complete_open_prices_falls_back_to_line_only(monkeypatch):
+    def fake_fetch(symbol, lookback_years=2):
+        df = _synthetic_df(n=520)
+        df.loc[df.index[-5], "Open"] = float("nan")  # some indexes have gaps in Open
+        return PriceHistory(symbol=symbol, df=df, fetched_at=datetime.now(UTC))
+
+    monkeypatch.setattr(tools, "fetch_history", fake_fetch)
+    tools.clear_cache()
+    out, err = _run("get_price_chart", {"symbols": ["^DJI"], "period": "3mo"})
+    assert not err
+    assert "opens" not in out["chart"]["series"][0]
+
+
 def test_price_chart_with_one_unknown_ticker_is_an_error_naming_it():
     out, err = _run("get_price_chart", {"symbols": ["NVDA", "NOPE"]})
     assert err

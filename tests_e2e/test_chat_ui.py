@@ -212,6 +212,54 @@ def test_comparison_chart_rebases_every_line_to_100(chat, page):
     expect(page.locator(".chart .legend li").nth(1)).to_contain_text("-")  # MSFT fell
 
 
+def _with_candles(series: dict) -> dict:
+    """Add open/high/low like the server does for a single stock: each day opens at the last close."""
+    closes = series["closes"]
+    opens = [closes[0], *closes[:-1]]
+    return {
+        **series,
+        "opens": opens,
+        "highs": [round(max(o, c) + 1, 2) for o, c in zip(opens, closes, strict=True)],
+        "lows": [round(min(o, c) - 1, 2) for o, c in zip(opens, closes, strict=True)],
+    }
+
+
+def test_single_stock_chart_can_switch_between_line_and_candles(chat, page):
+    chat.reply(chart_answer([_with_candles(_series("NVDA", 170, 0.5))]))
+    ask(page, "Show me a graph of Nvidia")
+    expect(page.locator(".chart-toggle button")).to_have_text(["Line", "Candles"])
+    expect(page.locator(".chart svg polyline.line")).to_have_count(1)  # line is the default
+    expect(page.locator(".chart .candle")).to_have_count(0)
+
+    page.get_by_role("button", name="Candles").click()
+    expect(page.locator(".chart .candle")).to_have_count(60)
+    expect(page.locator(".chart .wick")).to_have_count(60)
+    expect(page.locator(".chart .candle.up").first).to_be_visible()
+    expect(page.locator(".chart .candle.down").first).to_be_visible()
+    expect(page.locator(".chart svg polyline.line")).to_have_count(0)
+    expect(page.locator(".chart figcaption")).to_contain_text("Hollow green")
+    expect(page.get_by_role("button", name="Candles")).to_have_attribute("aria-pressed", "true")
+
+    page.get_by_role("button", name="Line").click()
+    expect(page.locator(".chart svg polyline.line")).to_have_count(1)
+    expect(page.locator(".chart .candle")).to_have_count(0)
+    expect(page.locator(".chart figcaption")).to_contain_text("Daily closing prices")
+
+
+def test_a_chart_without_open_high_low_has_no_toggle(chat, page):
+    """Charts saved before candles existed, or ones where Yahoo had gaps, stay line-only."""
+    chat.reply(chart_answer([_series("NVDA", 170, 0.5)]))
+    ask(page, "Show me a graph of Nvidia")
+    expect(page.locator(".chart svg polyline.line")).to_have_count(1)
+    expect(page.locator(".chart-toggle")).to_have_count(0)
+
+
+def test_a_comparison_chart_has_no_candles_toggle(chat, page):
+    chat.reply(chart_answer([_series("AAPL", 200, 0.4), _series("MSFT", 450, -0.3)]))
+    ask(page, "Compare Apple and Microsoft")
+    expect(page.locator(".chart-toggle")).to_have_count(0)
+
+
 def test_chart_with_no_usable_data_is_skipped_and_the_answer_still_shows(chat, page):
     chat.reply(chart_answer([{"symbol": "NVDA", "dates": [], "closes": []}], "No chart, but here is text."))
     ask(page, "graph it")

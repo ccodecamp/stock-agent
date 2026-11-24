@@ -219,8 +219,9 @@ function formatPrice(value, currency, digits) {
   }
 }
 
-// A line chart drawn from the daily closes the server sent. One stock shows dollars;
+// A price chart drawn from the daily prices the server sent. One stock shows its own currency;
 // several are rebased to 100 at the start so their percentage moves can be compared.
+// One stock can also be shown as candles, when the server sent its open, high and low as well.
 // Built with DOM calls and textContent only, so nothing from the data can inject HTML.
 function renderChart(chart) {
   const raw = (chart.series || []).filter((s) => s.closes && s.closes.length > 1);
@@ -232,47 +233,110 @@ function renderChart(chart) {
     values: multi ? s.closes.map((v) => (v / s.closes[0]) * 100) : s.closes,
     change: (s.closes[s.closes.length - 1] / s.closes[0] - 1) * 100,
   }));
+  // Charts saved before candles existed have no open/high/low, so they stay line-only.
+  const first = raw[0];
+  const count = first.closes.length;
+  const hasCandles = !multi && [first.opens, first.highs, first.lows].every((a) => Array.isArray(a) && a.length === count);
 
   // Sized to the space available so the axis text stays readable on a phone (it does not redraw on resize).
   const W = Math.max(300, Math.min(640, (log.clientWidth || 640) - 34));
   const H = Math.round(W * (W < 480 ? 0.7 : 0.47));
   const m = { l: W < 480 ? 48 : 58, r: 12, t: 12, b: 28 };
   const allTimes = series.flatMap((s) => s.times);
-  const allValues = series.flatMap((s) => s.values);
   const tMin = Math.min(...allTimes), tMax = Math.max(...allTimes);
-  let vMin = Math.min(...allValues), vMax = Math.max(...allValues);
-  const pad = (vMax - vMin || 1) * 0.08;
-  vMin -= pad;
-  vMax += pad;
   const x = (t) => m.l + ((t - tMin) / (tMax - tMin || 1)) * (W - m.l - m.r);
-  const y = (v) => m.t + (1 - (v - vMin) / (vMax - vMin)) * (H - m.t - m.b);
-  const fmtY = (v) => (multi ? v.toFixed(0) : formatPrice(v, raw[0].currency, vMax - vMin < 20 ? 2 : 0));
 
   const firstISO = new Date(tMin).toISOString().slice(0, 10);
   const lastISO = new Date(tMax).toISOString().slice(0, 10);
   const summary = series.map((s) => `${s.symbol} ${signedPct(s.change)}`).join(", ");
 
-  const fig = el("figure", "chart");
-  const svg = svgEl("svg", {
-    viewBox: `0 0 ${W} ${H}`,
-    role: "img",
-    "aria-label": `Price chart from ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}: ${summary}`,
-  });
+  function buildSvg(mode) {
+    const candles = mode === "candles";
+    // Candles reach the day's high and low, so the price axis has to cover those, not just the closes.
+    const allValues = candles ? [...first.highs, ...first.lows] : series.flatMap((s) => s.values);
+    let vMin = Math.min(...allValues), vMax = Math.max(...allValues);
+    const pad = (vMax - vMin || 1) * 0.08;
+    vMin -= pad;
+    vMax += pad;
+    const y = (v) => m.t + (1 - (v - vMin) / (vMax - vMin)) * (H - m.t - m.b);
+    const fmtY = (v) => (multi ? v.toFixed(0) : formatPrice(v, first.currency, vMax - vMin < 20 ? 2 : 0));
 
-  for (let i = 0; i < 5; i++) {
-    const v = vMin + ((vMax - vMin) * i) / 4;
-    svg.append(svgEl("line", { class: "grid", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
-    svg.append(svgEl("text", { class: "tick", x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, fmtY(v)));
+    const svg = svgEl("svg", {
+      viewBox: `0 0 ${W} ${H}`,
+      role: "img",
+      "aria-label": `${candles ? "Candlestick chart" : "Price chart"} from ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}: ${summary}`,
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const v = vMin + ((vMax - vMin) * i) / 4;
+      svg.append(svgEl("line", { class: "grid", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+      svg.append(svgEl("text", { class: "tick", x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, fmtY(v)));
+    }
+    [[tMin, "start"], [(tMin + tMax) / 2, "middle"], [tMax, "end"]].forEach(([t, anchor]) => {
+      const iso = new Date(t).toISOString().slice(0, 10);
+      svg.append(svgEl("text", { class: "tick", x: x(t), y: H - 8, "text-anchor": anchor }, shortDate(iso, true)));
+    });
+
+    if (candles) {
+      const step = (W - m.l - m.r) / Math.max(count - 1, 1);
+      const bodyWidth = Math.max(1, Math.min(8, step * 0.6));
+      series[0].times.forEach((t, j) => {
+        const open = first.opens[j], close = first.closes[j];
+        const dir = close >= open ? "up" : "down";
+        const cx = x(t);
+        const top = y(Math.max(open, close));
+        svg.append(svgEl("line", { class: `wick ${dir}`, x1: cx.toFixed(1), x2: cx.toFixed(1), y1: y(first.highs[j]).toFixed(1), y2: y(first.lows[j]).toFixed(1) }));
+        svg.append(svgEl("rect", {
+          class: `candle ${dir}`,
+          x: (cx - bodyWidth / 2).toFixed(1),
+          y: top.toFixed(1),
+          width: bodyWidth.toFixed(1),
+          height: Math.max(1, y(Math.min(open, close)) - top).toFixed(1),
+        }));
+      });
+    } else {
+      series.forEach((s, i) => {
+        const points = s.times.map((t, j) => `${x(t).toFixed(1)},${y(s.values[j]).toFixed(1)}`).join(" ");
+        svg.append(svgEl("polyline", { class: `line s${(i % 5) + 1}`, points }));
+      });
+    }
+    return svg;
   }
-  [[tMin, "start"], [(tMin + tMax) / 2, "middle"], [tMax, "end"]].forEach(([t, anchor]) => {
-    const iso = new Date(t).toISOString().slice(0, 10);
-    svg.append(svgEl("text", { class: "tick", x: x(t), y: H - 8, "text-anchor": anchor }, shortDate(iso, true)));
-  });
 
-  series.forEach((s, i) => {
-    const points = s.times.map((t, j) => `${x(t).toFixed(1)},${y(s.values[j]).toFixed(1)}`).join(" ");
-    svg.append(svgEl("polyline", { class: `line s${(i % 5) + 1}`, points }));
-  });
+  const captionFor = (mode) => {
+    if (multi) return "Every line starts at 100, so you can compare percentage moves.";
+    if (mode === "candles") {
+      return "Each candle is one day. Hollow green: it closed higher than it opened. Solid orange: it closed lower. The thin line is the day's high and low.";
+    }
+    return `Daily closing prices, ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}.`;
+  };
+
+  const fig = el("figure", "chart");
+  let mode = "line";
+  let svg = buildSvg(mode);
+  const caption = el("figcaption", "", captionFor(mode));
+
+  if (hasCandles) {
+    const toggle = el("div", "chart-toggle");
+    toggle.setAttribute("role", "group");
+    toggle.setAttribute("aria-label", "Chart style");
+    const buttons = [["line", "Line"], ["candles", "Candles"]].map(([value, label]) => {
+      const button = el("button", "", label);
+      button.type = "button";
+      button.addEventListener("click", () => {
+        mode = value;
+        const next = buildSvg(mode);
+        svg.replaceWith(next);
+        svg = next;
+        caption.textContent = captionFor(mode);
+        buttons.forEach(([v, b]) => b.setAttribute("aria-pressed", String(v === mode)));
+      });
+      toggle.append(button);
+      return [value, button];
+    });
+    buttons.forEach(([v, b]) => b.setAttribute("aria-pressed", String(v === mode)));
+    fig.append(toggle);
+  }
   fig.append(svg);
 
   const legend = el("ul", "legend");
@@ -282,15 +346,7 @@ function renderChart(chart) {
     legend.append(li);
   });
   fig.append(legend);
-  fig.append(
-    el(
-      "figcaption",
-      "",
-      multi
-        ? "Every line starts at 100, so you can compare percentage moves."
-        : `Daily closing prices, ${shortDate(firstISO, true)} to ${shortDate(lastISO, true)}.`,
-    ),
-  );
+  fig.append(caption);
   return fig;
 }
 
