@@ -23,7 +23,8 @@ from typing import Any
 
 import anthropic
 
-from .tools import TOOLS, execute_tool
+from .favorites import FAVORITE_TOOL_NAMES, FAVORITE_TOOLS, favorites_context, run_favorite_tool
+from .tools import TOOLS, execute_tool, symbol_exists
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +93,33 @@ Limits:
 - Only stocks, ETFs and indexes on the markets listed above. For any other market, say you don't
   cover it yet and offer one that you do. Politely decline anything unrelated to stocks.
 - If a tool returns an error, say so plainly and suggest checking the company name.
+
+Favourites:
+- The user can keep up to 10 favourite stocks or indexes. The page shows them in a sidebar with the
+  latest price. Their current list is given after these instructions.
+- When the user asks to favourite, heart, star, save, follow or watch a stock, call add_favorite with
+  its ticker (use find_company first unless you're sure of it). To take one off, call remove_favorite.
+- When your answer is mainly about one stock or index that is not already a favourite, end with one
+  short question offering to add it, like "Want me to add Nvidia to your favourites?" Offer at most
+  once per stock in a conversation, never again after the user says no, and not when the list is full.
+  If they say yes, call add_favorite.
+- If the list is full and they want to add one, say it holds 10 and ask which one to remove.
+- add_favorite checks the ticker has price data. If it fails, say plainly that it couldn't be added and
+  why (not found, or the list is full), and suggest checking the name. Never say it was added.
+- A favourite is just a shortcut to keep an eye on a stock. Never suggest it means the stock is a good buy.
 """
 
 
 def _tools_for_request() -> list[dict]:
     # Streamed request with client tools: stream tool inputs as generated.
     # Inputs are validated with pydantic in execute_tool before anything runs.
-    return [{**t, "eager_input_streaming": True} for t in TOOLS]
+    return [{**t, "eager_input_streaming": True} for t in [*TOOLS, *FAVORITE_TOOLS]]
+
+
+def _system(favorites: list[str]) -> list[dict]:
+    # The fixed instructions come first and never change, so they stay cacheable;
+    # the per-user favourites line goes in its own block after them.
+    return [{"type": "text", "text": SYSTEM_PROMPT}, {"type": "text", "text": favorites_context(favorites)}]
 
 
 def _split_chart(content: str) -> tuple[str, dict | None]:
@@ -124,6 +145,8 @@ def stream_chat(
     client: anthropic.Anthropic | None = None,
     model: str | None = None,
     tool_runner: ToolRunner | None = None,
+    favorites: list[str] | None = None,
+    symbol_check: Callable[[str], bool] | None = None,
 ) -> Iterator[dict]:
     """Run one user turn. Yields UI events as dicts with a "type" key:
 
@@ -131,15 +154,19 @@ def stream_chat(
     tool_call  {"name", "input"}        Claude is calling a tool
     tool_result{"name", "ok"}           the tool finished
     chart      {"period", "series"}     price series for the page to draw (never sent to Claude)
+    favorite   {"action", "symbol", "favorites"}  Claude added or removed a favourite
+    favorite_failed {"symbol", "reason", "message"}  an add was refused (unknown ticker, list full)
     done      {"messages"}             new messages to append to the history
     error      {"message"}              something went wrong; turn is over
     """
     client = client or anthropic.Anthropic()
     tool_runner = tool_runner or execute_tool  # looked up at call time so tests can patch it
+    symbol_check = symbol_check or symbol_exists
     model = model or os.environ.get("CHAT_MODEL", DEFAULT_MODEL)
     effort = os.environ.get("CHAT_EFFORT", "medium")
 
     history = list(messages)
+    favorites = list(favorites or [])  # this turn's copy; the favourite tools update it
     new_messages: list[dict] = []
     json_retries = 0
     rounds = 0
@@ -149,7 +176,7 @@ def stream_chat(
             with client.messages.stream(
                 model=model,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=_system(favorites),
                 tools=_tools_for_request(),
                 output_config={"effort": effort},
                 messages=history,
@@ -212,13 +239,19 @@ def stream_chat(
         results = []
         for block in tool_uses:
             yield {"type": "tool_call", "name": block.name, "input": block.input}
-            content, is_error = tool_runner(block.name, block.input)
-            chart = None
-            if not is_error:
-                content, chart = _split_chart(content)
+            chart = favorite = None
+            if block.name in FAVORITE_TOOL_NAMES:
+                # Handled here, not by tool_runner: they only change the page's list, never fetch data.
+                content, is_error, favorite = run_favorite_tool(block.name, block.input, favorites, symbol_check)
+            else:
+                content, is_error = tool_runner(block.name, block.input)
+                if not is_error:
+                    content, chart = _split_chart(content)
             yield {"type": "tool_result", "name": block.name, "ok": not is_error}
             if chart:
                 yield {"type": "chart", **chart}
+            if favorite:
+                yield favorite
             result = {"type": "tool_result", "tool_use_id": block.id, "content": content}
             if is_error:
                 result["is_error"] = True

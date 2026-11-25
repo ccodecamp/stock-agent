@@ -114,7 +114,7 @@ def test_refusal_never_runs_tools_and_is_left_out_of_history(monkeypatch):
 
 @pytest.fixture
 def api(monkeypatch):
-    monkeypatch.setattr(app_module, "stream_chat", lambda messages: iter([{"type": "text", "text": "hi"}]))
+    monkeypatch.setattr(app_module, "stream_chat", lambda messages, **kw: iter([{"type": "text", "text": "hi"}]))
     app_module.limiter.reset()
     daily_limit.reset()
     return TestClient(app_module.app)

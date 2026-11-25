@@ -96,7 +96,7 @@ def test_configured_limit_reads_the_environment_safely(monkeypatch, raw, expecte
 def api(monkeypatch):
     calls = []
 
-    def fake_stream(messages):
+    def fake_stream(messages, **kwargs):
         calls.append(messages)
         return iter([{"type": "text", "text": "hi"}])
 

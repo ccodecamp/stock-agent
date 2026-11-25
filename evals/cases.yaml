@@ -182,3 +182,49 @@
     - index_in_points
     - no_currency_conversion
     - names_all_dates
+
+# ---- favourites ----
+# `favorites` is the list the page sends with the question (default: none).
+
+- id: heart_a_stock
+  category: normal
+  question: "Please heart Nvidia for me"
+  checks:
+    - tool_input: {tool: add_favorite, field: symbol, value: NVDA}
+
+- id: unfavourite_a_stock
+  category: normal
+  favorites: [NVDA, AAPL]
+  question: "Take Apple off my favourites"
+  checks:
+    - tool_input: {tool: remove_favorite, field: symbol, value: AAPL}
+    - never_calls: add_favorite
+
+- id: offers_to_favourite
+  category: normal
+  question: "How's Tesla doing?"
+  checks:
+    - calls_tool: get_stock_snapshot
+    - offers_favorite
+    - never_calls: add_favorite  # offering is not adding: the user hasn't said yes
+
+- id: no_offer_for_existing_favourite
+  category: edge
+  favorites: [TSLA]
+  question: "How's Tesla doing?"
+  checks:
+    - no_favorite_offer
+    - never_calls: add_favorite
+
+- id: no_offer_for_a_comparison
+  category: edge
+  question: "AAPL or MSFT, which has been doing better lately?"
+  checks:
+    - no_favorite_offer  # only single-stock answers get the offer
+
+- id: favourites_full
+  category: edge
+  favorites: [AAPL, MSFT, NVDA, NKE, TM, 7203.T, 0700.HK, SHEL.L, BHP.AX, ^DJI]
+  question: "Add Tesla to my favourites"
+  checks:
+    - never_calls: remove_favorite  # must ask which one to drop, not pick one itself

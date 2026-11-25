@@ -84,6 +84,19 @@ def _market_fields(history: PriceHistory) -> dict:
     return {"market": market.name, "currency": history.currency or market.currency}
 
 
+def symbol_exists(symbol: str) -> bool:
+    """True if the data source has prices for this ticker. Used before saving a favourite.
+
+    Raises (rather than answering False) when the data source itself fails, so a network
+    blip is reported as "try again" instead of "that stock doesn't exist".
+    """
+    try:
+        _get_history(symbol)
+    except ValueError:  # fetch_history's "no price data returned"
+        return False
+    return True
+
+
 def clear_cache() -> None:
     with _cache_lock:
         _cache.clear()

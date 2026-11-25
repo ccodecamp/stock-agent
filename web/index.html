@@ -19,15 +19,20 @@
 </head>
 <body>
   <div class="shell">
-  <aside id="sidebar" class="sidebar" aria-label="Your chats">
+  <aside id="sidebar" class="sidebar" aria-label="Favourites and chats">
     <div class="side-head">
-      <h2>Your chats</h2>
+      <h2 id="favs-title">Favourites <span id="fav-count" class="count"></span></h2>
       <button type="button" id="close-sidebar" class="ghost">Close</button>
+    </div>
+    <ul id="fav-list" class="fav-list" aria-labelledby="favs-title"></ul>
+    <p id="no-favs" class="side-note">Ask me to heart a stock, or say yes when I offer, and it shows up here.</p>
+    <div class="side-head chats-head">
+      <h2>Your chats</h2>
     </div>
     <ul id="chat-list" class="chat-list"></ul>
     <p id="no-chats" class="side-note">Your chats will show up here.</p>
     <p id="save-warning" class="side-note warn" hidden>This browser wouldn't let us save chats, so they'll be gone when you close the page.</p>
-    <p class="side-note">Chats are saved on this device only.</p>
+    <p class="side-note">Chats and favourites are saved on this device only.</p>
   </aside>
   <div id="backdrop" class="backdrop" hidden></div>
   <div class="app">

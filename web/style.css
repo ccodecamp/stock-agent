@@ -322,3 +322,40 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
   .backdrop:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.4); }
 }
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
+
+/* ---------------------------------------------------------------- favourites */
+
+.side-head .count { margin-left: 4px; font-weight: 400; font-size: 0.8rem; color: var(--muted); }
+.chats-head { margin-top: 22px; }
+.fav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.fav-row { display: flex; align-items: center; border-radius: 10px; }
+.fav-row:hover { background: var(--bg); }
+.fav-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: none;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 0.92rem;
+}
+.fav-top { display: flex; justify-content: space-between; gap: 8px; }
+.fav-bottom { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fav-change { font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.fav-change.up { color: var(--ok); }
+.fav-change.down { color: var(--error); }
+.fav-del {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--error);
+  padding: 9px 10px;
+  font-size: 1rem;
+  border-radius: 10px;
+}
+.fav-del:hover { opacity: 0.7; }
+.fav-error { margin: 8px 0 0; font-size: 0.85rem; color: var(--error); }
