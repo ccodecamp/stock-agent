@@ -6,6 +6,18 @@
   <!-- Backend base URL. Empty = same origin (the API serves this page). -->
   <meta name="api-base" content="">
   <title>Stock Guide</title>
+  <meta name="description" content="Ask how any stock, ETF or market is doing, in plain English. Prices, trends and charts, explained simply. Not investment advice.">
+  <!-- Link previews (WhatsApp, LinkedIn, Slack). Image URLs must be absolute. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Stock Guide">
+  <meta property="og:title" content="Stock Guide: ask how any stock is doing, in plain English">
+  <meta property="og:description" content="Ask about any stock, ETF or market. Prices, trends and charts, explained simply. Not investment advice.">
+  <meta property="og:url" content="https://stock-agent-production-4e16.up.railway.app/">
+  <meta property="og:image" content="https://stock-agent-production-4e16.up.railway.app/icons/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Stock Guide: a chat that explains how a stock is doing in plain English">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="style.css">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#1f6f5c">
@@ -63,7 +75,10 @@
       <textarea id="input" rows="1" maxlength="1000" placeholder="Ask about any company or market…" required></textarea>
       <button type="submit" id="send">Send</button>
     </form>
-    <p class="disclaimer">Describes what has happened, not what will. Not investment advice.</p>
+    <footer class="disclaimer">
+      <p>Describes what has happened, not what will. Not investment advice.</p>
+      <p>© 2026 Chaitanya Kulkarni · Open source (MIT) · <a href="https://github.com/ccodecamp/stock-agent" target="_blank" rel="noopener">GitHub</a></p>
+    </footer>
   </div>
   </div>
   <script src="app.js"></script>
