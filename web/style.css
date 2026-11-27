@@ -199,6 +199,9 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 #send:disabled { opacity: 0.5; cursor: default; }
 
 .disclaimer { margin: 0 0 calc(14px + env(safe-area-inset-bottom)); text-align: center; font-size: 0.78rem; color: var(--muted); }
+.disclaimer p { margin: 0; }
+.disclaimer p + p { margin-top: 2px; }
+.disclaimer a { color: inherit; }
 
 .visually-hidden {
   position: absolute;
