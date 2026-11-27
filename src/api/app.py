@@ -19,6 +19,7 @@ Environment:
     ALLOWED_ORIGINS     comma-separated CORS origins, default http://localhost:3000
     CHAT_RATE_LIMIT     per-IP limit, default 10/minute
     CHAT_DAILY_LIMIT    chats per UTC day for the whole app, default 300, 0 = no cap
+    QUOTES_RATE_LIMIT   per-IP limit on the sidebar's price lookups, default 30/minute
 """
 
 from __future__ import annotations
@@ -28,20 +29,22 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .chat import stream_chat
+from .favorites import MAX_FAVORITES, latest_quote
 from .limits import configured_limit, daily_limit
+from .tools import SYMBOL_PATTERN
 
 load_dotenv()
 
@@ -70,8 +73,22 @@ class Message(BaseModel):
     content: str | list[dict[str, Any]]
 
 
+Symbol = Annotated[str, StringConstraints(pattern=SYMBOL_PATTERN)]
+
+
+def _dedupe(symbols: list[str]) -> list[str]:
+    return list(dict.fromkeys(symbols))  # keep order, drop repeats
+
+
 class ChatRequest(BaseModel):
     messages: list[Message] = Field(min_length=1, max_length=MAX_MESSAGES)
+    # The page's favourites, so Claude knows what's saved (the server stores nothing).
+    favorites: list[Symbol] = Field(default_factory=list, max_length=MAX_FAVORITES)
+
+    @field_validator("favorites")
+    @classmethod
+    def _dedupe_favorites(cls, favorites: list[str]) -> list[str]:
+        return _dedupe(favorites)
 
     @field_validator("messages")
     @classmethod
@@ -120,10 +137,28 @@ def chat(request: Request, body: ChatRequest) -> Response:
         )
     messages = [m.model_dump() for m in body.messages]
     return StreamingResponse(
-        _sse(stream_chat(messages)),
+        _sse(stream_chat(messages, favorites=body.favorites)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class _QuoteSymbols(BaseModel):
+    symbols: list[Symbol] = Field(min_length=1, max_length=MAX_FAVORITES)
+
+
+@app.get("/api/quotes")
+@limiter.limit(lambda: os.environ.get("QUOTES_RATE_LIMIT", "30/minute"))
+def quotes(request: Request, symbols: str = Query(max_length=200)) -> dict:
+    """Latest close and daily change for the favourites sidebar, e.g. ?symbols=NVDA,BHP.AX.
+
+    No model is involved, so this does not count towards the daily chat limit.
+    """
+    try:
+        wanted = _QuoteSymbols(symbols=_dedupe([s.strip() for s in symbols.split(",") if s.strip()]))
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors(include_url=False, include_context=False)) from None
+    return {"quotes": [latest_quote(s) for s in wanted.symbols]}
 
 
 # Mounted last so every /api route above wins; anything else is a static file,

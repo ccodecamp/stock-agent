@@ -4,6 +4,9 @@
 //   text        {text}            piece of the answer
 //   tool_call   {name, input}     Claude is calling a tool
 //   tool_result {name, ok}        the tool finished
+//   chart       {period, series}  price series to draw
+//   favorite    {action, symbol}  Claude added or removed a favourite
+//   favorite_failed {symbol, message}  Claude tried to add one and it was refused
 //   done        {messages}        messages to append to the history
 //   error       {message}         the turn failed
 //
@@ -29,6 +32,9 @@ const noChats = document.getElementById("no-chats");
 const saveWarning = document.getElementById("save-warning");
 const chatsToggle = document.getElementById("chats-toggle");
 const closeSidebarBtn = document.getElementById("close-sidebar");
+const favList = document.getElementById("fav-list");
+const favCount = document.getElementById("fav-count");
+const noFavs = document.getElementById("no-favs");
 
 let busy = false;
 
@@ -94,6 +100,127 @@ function deleteChat(id) {
   chats = stored || [];
   if (current.id === id) startNewChat();
   else renderList();
+}
+
+// ---------------------------------------------------------------- favourites
+//
+// Up to MAX_FAVORITES stocks, kept in localStorage next to the chats and sent with every
+// chat turn so Claude knows what is saved. Only Claude adds them (add_favorite), when the
+// user asks it to heart / favourite a stock or says yes to its offer. The server checks the
+// ticker exists first; if not, it sends favorite_failed and the answer shows the error.
+// The sidebar shows each one's latest close from GET /api/quotes (no model, no chat cost).
+
+const FAV_KEY = "stock-guide-favorites-v1";
+const MAX_FAVORITES = 10;
+const QUOTE_REFRESH_MS = 15 * 60 * 1000; // matches the server's price cache
+
+// {list: [{symbol, added}]}
+function readFavs() {
+  try {
+    const data = JSON.parse(localStorage.getItem(FAV_KEY) || "{}");
+    const list = Array.isArray(data.list) ? data.list.filter((f) => f && typeof f.symbol === "string") : [];
+    return { list: list.slice(0, MAX_FAVORITES) };
+  } catch (_) {
+    return { list: [] };
+  }
+}
+
+function writeFavs(data) {
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify(data));
+  } catch (_) { /* storage blocked or full: favourites last for this page only */ }
+  favs = data;
+}
+
+let favs = readFavs();
+const quotes = new Map(); // symbol -> quote from /api/quotes
+
+function favSymbols() {
+  return favs.list.map((f) => f.symbol);
+}
+
+// Returns "added", "exists" or "full". Re-reads the store so another tab's changes are kept.
+function addFavorite(symbol) {
+  const data = readFavs();
+  if (data.list.some((f) => f.symbol === symbol)) return "exists";
+  if (data.list.length >= MAX_FAVORITES) return "full";
+  data.list.push({ symbol, added: Date.now() });
+  writeFavs(data);
+  renderFavorites();
+  refreshQuotes();
+  return "added";
+}
+
+function removeFavorite(symbol) {
+  const data = readFavs();
+  data.list = data.list.filter((f) => f.symbol !== symbol);
+  writeFavs(data);
+  renderFavorites();
+}
+
+function quoteLine(q) {
+  if (!q) return { price: "…", change: "", dir: "" };
+  if (q.error) return { price: "No price right now", change: "", dir: "" };
+  const price = q.kind === "index" ? `${formatPrice(q.close, null, 2)} pts` : formatPrice(q.close, q.currency, 2);
+  if (typeof q.change_pct !== "number") return { price, change: "", dir: "" };
+  return { price, change: signedPct(q.change_pct), dir: q.change_pct >= 0 ? "up" : "down" };
+}
+
+function renderFavorites() {
+  favList.replaceChildren();
+  noFavs.hidden = favs.list.length > 0;
+  favCount.textContent = favs.list.length ? `${favs.list.length}/${MAX_FAVORITES}` : "";
+  for (const f of favs.list) {
+    const q = quotes.get(f.symbol);
+    const line = quoteLine(q);
+    const li = el("li", "fav-row");
+    const open = el("button", "fav-open");
+    open.type = "button";
+    open.setAttribute("aria-label", `Ask how ${f.symbol} is doing`);
+    const top = el("span", "fav-top");
+    top.append(el("strong", "", f.symbol), el("span", `fav-change ${line.dir}`, line.change));
+    const bottom = el("span", "fav-bottom", line.price);
+    if (q && q.as_of) bottom.append(el("span", "fav-date", ` · ${shortDate(q.as_of)}`));
+    open.append(top, bottom);
+    open.addEventListener("click", () => {
+      if (busy) return;
+      closeSidebar();
+      send(`How's ${f.symbol} doing?`);
+    });
+
+    const del = el("button", "fav-del", "♥");
+    del.type = "button";
+    del.setAttribute("aria-label", `Remove ${f.symbol} from favourites`);
+    del.addEventListener("click", () => removeFavorite(f.symbol));
+    li.append(open, del);
+    favList.append(li);
+  }
+}
+
+let quotesTimer;
+let quotesRefreshedAt = 0;
+// Fetches prices the sidebar doesn't have yet (or that went stale), in one request.
+async function refreshQuotes() {
+  const symbols = favSymbols().filter((sym) => !quotes.has(sym) || quotes.get(sym).stale);
+  if (!symbols.length) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/quotes?symbols=${encodeURIComponent(symbols.join(","))}`);
+    if (!res.ok) throw new Error(`quotes ${res.status}`);
+    for (const q of (await res.json()).quotes || []) quotes.set(q.symbol, q);
+  } catch (err) {
+    console.error(err);
+    symbols.forEach((sym) => quotes.set(sym, { symbol: sym, error: "unavailable", stale: true }));
+  }
+  renderFavorites();
+}
+
+// Every 15 minutes every price is due again, and when the page comes back after longer than that.
+function refreshAllQuotes() {
+  clearTimeout(quotesTimer);
+  quotesTimer = setTimeout(refreshAllQuotes, QUOTE_REFRESH_MS);
+  quotesRefreshedAt = Date.now();
+  for (const q of quotes.values()) q.stale = true;
+  refreshQuotes();
 }
 
 // ---------------------------------------------------------------- rendering
@@ -366,6 +493,10 @@ function describeTool(name, inp) {
       return `Drawing a chart of ${((inp && inp.symbols) || []).join(", ")}`;
     case "run_backtest":
       return `Testing a simple strategy on ${sym}'s history`;
+    case "add_favorite":
+      return `Adding ${sym} to your favourites`;
+    case "remove_favorite":
+      return `Removing ${sym} from your favourites`;
     default:
       return `Running ${name}`;
   }
@@ -443,7 +574,7 @@ async function send(text) {
     const res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: turnMessages }),
+      body: JSON.stringify({ messages: turnMessages, favorites: favSymbols() }),
     });
     if (!res.ok) {
       showError(await errorFromResponse(res));
@@ -462,6 +593,13 @@ async function send(text) {
       } else if (event.type === "tool_result") {
         const item = stepItems.find((s) => s.name === event.name && !s.li.className);
         if (item) item.li.className = event.ok ? "ok" : "fail";
+      } else if (event.type === "favorite") {
+        if (event.action === "add") addFavorite(event.symbol);
+        else if (event.action === "remove") removeFavorite(event.symbol);
+      } else if (event.type === "favorite_failed") {
+        const p = el("p", "fav-error", event.message || `Failed to add ${event.symbol} to favourites.`);
+        p.setAttribute("role", "alert");
+        view.wrap.append(p);
       } else if (event.type === "chart") {
         const fig = renderChart(event);
         if (fig) view.wrap.insertBefore(fig, view.body);
@@ -651,11 +789,21 @@ document.addEventListener("keydown", (e) => {
 });
 // Another tab saved or deleted a chat.
 window.addEventListener("storage", (e) => {
+  if (e.key === FAV_KEY) {
+    favs = readFavs();
+    renderFavorites();
+    refreshQuotes();
+  }
   if (e.key !== STORE_KEY) return;
   chats = readStore();
   renderList();
 });
 renderList();
+renderFavorites();
+refreshAllQuotes();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && Date.now() - quotesRefreshedAt > QUOTE_REFRESH_MS) refreshAllQuotes();
+});
 
 // Lets the page be installed on a phone's home screen. Skipped on file:// and old browsers.
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

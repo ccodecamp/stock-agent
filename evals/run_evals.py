@@ -21,8 +21,9 @@ import yaml
 from dotenv import load_dotenv
 
 from src.api.chat import DEFAULT_MODEL, stream_chat
+from src.api.favorites import FAVORITE_TOOL_NAMES
 
-from .fixtures import FixtureTools
+from .fixtures import FixtureTools, ToolCallRecord
 from .graders import CHECKS, DEFAULT_CHECKS, Run
 from .usage import RecordingClient, Usage, format_cost
 
@@ -45,11 +46,19 @@ def run_case_once(case: dict, **chat_kwargs) -> Run:
     """chat_kwargs go to stream_chat (model=, client=, ...)."""
     tools = FixtureTools()
     text, error = [], None
-    for event in stream_chat([{"role": "user", "content": case["question"]}], tool_runner=tools, **chat_kwargs):
+    pending: list[tuple[str, object]] = []  # favourite tool calls, which never reach FixtureTools
+    messages = [{"role": "user", "content": case["question"]}]
+    favs = case.get("favorites", [])
+    for event in stream_chat(messages, tool_runner=tools, favorites=favs, symbol_check=tools.has_symbol, **chat_kwargs):
         if event["type"] == "text":
             text.append(event["text"])
         elif event["type"] == "error":
             error = event["message"]
+        elif event["type"] == "tool_call" and event["name"] in FAVORITE_TOOL_NAMES:
+            pending.append((event["name"], event["input"]))
+        elif event["type"] == "tool_result" and event["name"] in FAVORITE_TOOL_NAMES and pending:
+            name, inp = pending.pop(0)
+            tools.log.append(ToolCallRecord(name, inp, "{}", not event["ok"]))
     return Run(question=case["question"], text="".join(text), tool_calls=tools.log, error=error)
 
 

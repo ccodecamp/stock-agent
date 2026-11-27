@@ -559,13 +559,30 @@ def names_all_dates(run: Run, arg=None) -> Result:
     return _fail(f"results are dated {found}, but the answer names neither all of them nor that they differ")
 
 
+# ---- favourites ----
+
+# "Want me to add Nvidia to your favourites?", "Shall I save it as a favourite?", "...heart it for you?"
+_FAVORITE_OFFER = re.compile(r"\b(?:favou?rite|heart|watch ?list)[^.!?\n]*\?", re.IGNORECASE)
+
+
+def offers_favorite(run: Run, arg=None) -> Result:
+    """The answer asks whether to add the stock to the favourites (a question, not a statement)."""
+    return _ok() if _FAVORITE_OFFER.search(run.text) else _fail("never offered to add it to the favourites")
+
+
+def no_favorite_offer(run: Run, arg=None) -> Result:
+    """No offer to favourite: used when the stock already is one, or the list is full."""
+    m = _FAVORITE_OFFER.search(run.text)
+    return _fail(f"offered to favourite: '{m.group(0).strip()}'") if m else _ok()
+
+
 CHECKS: dict[str, Callable[..., Result]] = {
     f.__name__: f
     for f in (
         answered, no_banned_words, no_advice, plain_text, numbers_grounded, no_numbers,
         calls_tool, never_calls, calls_no_tools, tool_input, covers_symbols, names_date,
         currency_named, no_currency_conversion, index_in_points, names_listing, never_fetches,
-        declines_market, names_all_dates,
+        declines_market, names_all_dates, offers_favorite, no_favorite_offer,
     )
 }  # fmt: skip
 

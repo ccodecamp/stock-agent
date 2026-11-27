@@ -15,6 +15,7 @@ from evals.fixtures import FixtureTools, ToolCallRecord
 from evals.graders import Run
 from evals.run_evals import grade, load_cases, parse_check
 from src.api.chat import SYSTEM_PROMPT
+from src.api.tools import SYMBOL_PATTERN
 
 
 def _call(name, inp, output=None, is_error=False):
@@ -215,6 +216,35 @@ def test_covers_symbols_understands_a_chart_call_with_several_symbols():
     assert not graders.covers_symbols(run, ["AAPL", "TSLA"]).passed
 
 
+# ---- favourites ----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Tesla is up 4% this month. Want me to add Tesla to your favourites?",
+        "Should I heart it so it shows in your sidebar?",
+        "Would you like it on your favorites list?",
+    ],
+)
+def test_favourite_offer_is_recognised(text):
+    assert graders.offers_favorite(_run(text)).passed
+    assert not graders.no_favorite_offer(_run(text)).passed
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Tesla is up 4% this month.",
+        "Tesla is already in your favourites. Want to see a chart?",  # a statement, then an unrelated question
+        "Done, Tesla is now a favourite.",
+    ],
+)
+def test_no_favourite_offer_is_recognised(text):
+    assert not graders.offers_favorite(_run(text)).passed
+    assert graders.no_favorite_offer(_run(text)).passed
+
+
 # ---- the case file ----
 
 
@@ -227,6 +257,9 @@ def test_case_file_is_well_formed():
         assert c["question"].strip()
         for spec in c.get("checks", []):
             assert parse_check(spec)[0] in graders.CHECKS, f"{c['id']}: unknown check {spec}"
+        favs = c.get("favorites", [])
+        assert isinstance(favs, list) and len(favs) <= 10, f"{c['id']}: favorites must be a list of at most 10"
+        assert all(re.fullmatch(SYMBOL_PATTERN, f) for f in favs), f"{c['id']}: bad favourite ticker"
     assert re.fullmatch(r"[a-z0-9_]+", "".join(ids).replace("_", "a"))
 
 

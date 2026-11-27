@@ -394,6 +394,10 @@ class FixtureTools:
         self.log.append(ToolCallRecord(name, raw_input, output, is_error))
         return output, is_error
 
+    def has_symbol(self, symbol: str) -> bool:
+        """Stands in for tools.symbol_exists, so adding a favourite never touches the network."""
+        return symbol in _STOCKS
+
     def _serve(self, name: str, raw: object) -> tuple[str, bool]:
         args = raw if isinstance(raw, dict) else {}
         if name == "find_company":
